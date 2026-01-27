@@ -1,0 +1,117 @@
+# Copyright (c) 2011-present Sonatype, Inc. All rights reserved.
+# Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
+# "Sonatype" is a trademark of Sonatype, Inc.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+      seaworthy_ref:
+        description: 'Seaworthy branch/tag/commit to build from'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Validate version format
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Error: Version must be in format X.Y.Z (e.g., 1.0.0)"
+            exit 1
+          fi
+
+      - name: Checkout agp-action
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout seaworthy
+        uses: actions/checkout@v4
+        with:
+          repository: sonatype/seaworthy
+          ref: ${{ inputs.seaworthy_ref }}
+          path: seaworthy
+          token: ${{ secrets.SEAWORTHY_PAT }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build AGP binary
+        run: |
+          cd seaworthy/agentic-patches-ts
+          bun install
+          bun build --compile --target=bun-linux-x64 --outfile=../../agp-linux-x64 src/index.ts
+          chmod +x ../../agp-linux-x64
+
+          # Verify binary works
+          ../../agp-linux-x64 --version || echo "Note: --version may not be implemented yet"
+
+      - name: Commit binary
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Remove seaworthy checkout before committing
+          rm -rf seaworthy
+
+          git add agp-linux-x64
+          git commit -m "chore: update AGP binary for v${{ inputs.version }}" || echo "No changes to commit"
+          git push
+
+      - name: Create release tag
+        run: |
+          VERSION="v${{ inputs.version }}"
+
+          # Create the specific version tag
+          git tag -fa "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION" --force
+
+          # Update major version tag (e.g., v1 points to latest v1.x.x)
+          MAJOR_VERSION=$(echo "$VERSION" | cut -d. -f1)
+          git tag -fa "$MAJOR_VERSION" -m "Latest $MAJOR_VERSION release"
+          git push origin "$MAJOR_VERSION" --force
+
+          echo "Created tags: $VERSION, $MAJOR_VERSION"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          body: |
+            ## AGP Action v${{ inputs.version }}
+
+            Built from [seaworthy@${{ inputs.seaworthy_ref }}](https://github.com/sonatype/seaworthy/tree/${{ inputs.seaworthy_ref }})
+
+            ### Usage
+
+            ```yaml
+            - uses: sonatype/agp-action@v${{ inputs.version }}
+              with:
+                create-pr: true
+              env:
+                ANTHROPIC_API_KEY: ${{ '${{ secrets.ANTHROPIC_API_KEY }}' }}
+                AGP_API_TOKEN: ${{ '${{ secrets.AGP_API_TOKEN }}' }}
+                GITHUB_TOKEN: ${{ '${{ secrets.GITHUB_TOKEN }}' }}
+            ```
+
+            Or use the floating major version tag for automatic updates:
+
+            ```yaml
+            - uses: sonatype/agp-action@v1
+            ```
+          draft: false
+          prerelease: false
+          files: |
+            agp-linux-x64

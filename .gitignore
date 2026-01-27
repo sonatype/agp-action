@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build artifacts (agp-linux-x64 is tracked - added by release workflow)
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temp files
+*.tmp
+*.log

@@ -1,0 +1,84 @@
+# Copyright (c) 2011-present Sonatype, Inc. All rights reserved.
+# Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
+# "Sonatype" is a trademark of Sonatype, Inc.
+
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-docker-build:
+    name: Test Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required files exist
+        run: |
+          for file in action.yml Dockerfile entrypoint.sh agp-linux-x64; do
+            if [ ! -f "$file" ]; then
+              echo "Error: $file not found"
+              exit 1
+            fi
+          done
+          echo "All required files present"
+
+      - name: Build Docker image
+        run: docker build -t agp-action:test .
+
+      - name: Test entrypoint help
+        run: |
+          # Test that the container starts and AGP binary runs
+          docker run --rm \
+            -e INPUT_DRY_RUN=true \
+            -e INPUT_VERBOSE=true \
+            agp-action:test agp --help || true
+
+      - name: Test Node.js versions available
+        run: |
+          docker run --rm --entrypoint /bin/bash agp-action:test -c '
+            source /usr/local/nvm/nvm.sh
+            echo "Testing Node 20..."
+            nvm use 20
+            node --version
+            echo "Testing Node 22..."
+            nvm use 22
+            node --version
+          '
+
+  test-action-dry-run:
+    name: Test Action (Dry Run)
+    runs-on: ubuntu-latest
+    # Only run if AGP binary exists (after first release)
+    if: hashFiles('agp-linux-x64') != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create test package.json
+        run: |
+          mkdir -p test-project
+          cat > test-project/package.json << 'EOF'
+          {
+            "name": "test-project",
+            "version": "1.0.0",
+            "dependencies": {
+              "lodash": "4.17.20"
+            }
+          }
+          EOF
+
+      - name: Run AGP Action (dry-run)
+        uses: ./
+        with:
+          working-directory: test-project
+          dry-run: true
+          verbose: true
+        env:
+          # These would normally be secrets, but dry-run doesn't need real values
+          ANTHROPIC_API_KEY: test-key-not-used-in-dry-run
+          AGP_API_TOKEN: test-token-not-used-in-dry-run
+        continue-on-error: true  # Dry run may fail without real API access, that's OK

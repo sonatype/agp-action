@@ -1,0 +1,88 @@
+# Copyright (c) 2011-present Sonatype, Inc. All rights reserved.
+# Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
+# "Sonatype" is a trademark of Sonatype, Inc.
+
+name: "AGP - Agentic Patches"
+description: "AI-powered dependency upgrades for npm projects"
+author: "Sonatype"
+
+branding:
+  icon: "package"
+  color: "blue"
+
+inputs:
+  working-directory:
+    description: "Directory containing package.json"
+    required: false
+    default: "."
+  node-version:
+    description: "Node.js version to use (20 or 22)"
+    required: false
+    default: "22"
+  create-pr:
+    description: "Create GitHub PRs for upgrades"
+    required: false
+    default: "false"
+  draft-pr:
+    description: "Create PRs as drafts"
+    required: false
+    default: "false"
+  enable-agent:
+    description: "Enable AI agent for fixing validation failures"
+    required: false
+    default: "true"
+  max-fix-attempts:
+    description: "Maximum AI fix attempts per group"
+    required: false
+    default: "3"
+  dry-run:
+    description: "Preview changes without applying them"
+    required: false
+    default: "false"
+  group:
+    description: "Apply only a specific group by ID"
+    required: false
+    default: ""
+  validation-commands:
+    description: "Commands to validate upgrades (newline-separated)"
+    required: false
+    default: ""
+  npmrc-content:
+    description: "Base64-encoded .npmrc content (with tokens included)"
+    required: false
+    default: ""
+  anthropic-base-url:
+    description: "Custom Anthropic API endpoint"
+    required: false
+    default: ""
+  verbose:
+    description: "Enable verbose output"
+    required: false
+    default: "false"
+
+outputs:
+  run-id:
+    description: "AGP run tracking ID"
+  groups-upgraded:
+    description: "Number of groups successfully upgraded"
+  groups-failed:
+    description: "Number of groups that failed"
+  pr-urls:
+    description: "JSON array of created PR URLs"
+
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  env:
+    INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+    INPUT_NODE_VERSION: ${{ inputs.node-version }}
+    INPUT_CREATE_PR: ${{ inputs.create-pr }}
+    INPUT_DRAFT_PR: ${{ inputs.draft-pr }}
+    INPUT_ENABLE_AGENT: ${{ inputs.enable-agent }}
+    INPUT_MAX_FIX_ATTEMPTS: ${{ inputs.max-fix-attempts }}
+    INPUT_DRY_RUN: ${{ inputs.dry-run }}
+    INPUT_GROUP: ${{ inputs.group }}
+    INPUT_VALIDATION_COMMANDS: ${{ inputs.validation-commands }}
+    INPUT_NPMRC_CONTENT: ${{ inputs.npmrc-content }}
+    INPUT_ANTHROPIC_BASE_URL: ${{ inputs.anthropic-base-url }}
+    INPUT_VERBOSE: ${{ inputs.verbose }}
