@@ -8,13 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 1.0.0)'
+        description: 'Version to release (e.g., 1.0.0) - must match published @sonatype/agp version'
         required: true
-        type: string
-      seaworthy_ref:
-        description: 'Seaworthy branch/tag/commit to build from'
-        required: false
-        default: 'main'
         type: string
 
 jobs:
@@ -31,45 +26,28 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout agp-action
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Checkout seaworthy
-        uses: actions/checkout@v4
-        with:
-          repository: sonatype/seaworthy
-          ref: ${{ inputs.seaworthy_ref }}
-          path: seaworthy
-          token: ${{ secrets.SEAWORTHY_PAT }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Build AGP binary
+      - name: Update Dockerfile version
         run: |
-          cd seaworthy/agentic-patches-ts
-          bun install
-          bun build --compile --target=bun-linux-x64 --outfile=../../agp-linux-x64 src/index.ts
-          chmod +x ../../agp-linux-x64
+          # Update the default AGP_VERSION in Dockerfile
+          sed -i "s/ARG AGP_VERSION=.*/ARG AGP_VERSION=${{ inputs.version }}/" Dockerfile
 
-          # Verify binary works
-          ../../agp-linux-x64 --version || echo "Note: --version may not be implemented yet"
+          # Commit if changed
+          if git diff --quiet Dockerfile; then
+            echo "Dockerfile already up to date"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add Dockerfile
+            git commit -m "chore: update AGP version to ${{ inputs.version }}"
+            git push
+          fi
 
-      - name: Commit binary
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Remove seaworthy checkout before committing
-          rm -rf seaworthy
-
-          git add agp-linux-x64
-          git commit -m "chore: update AGP binary for v${{ inputs.version }}" || echo "No changes to commit"
-          git push
-
-      - name: Create release tag
+      - name: Create release tags
         run: |
           VERSION="v${{ inputs.version }}"
 
@@ -92,7 +70,7 @@ jobs:
           body: |
             ## AGP Action v${{ inputs.version }}
 
-            Built from [seaworthy@${{ inputs.seaworthy_ref }}](https://github.com/sonatype/seaworthy/tree/${{ inputs.seaworthy_ref }})
+            This release uses `@sonatype/agp@${{ inputs.version }}` from the npm registry.
 
             ### Usage
 
@@ -111,7 +89,9 @@ jobs:
             ```yaml
             - uses: sonatype/agp-action@v1
             ```
+
+            ### Prerequisites
+
+            Ensure `@sonatype/agp@${{ inputs.version }}` is published to the npm registry before using this release.
           draft: false
           prerelease: false
-          files: |
-            agp-linux-x64

@@ -7,8 +7,11 @@
 
 FROM alpine:3.21
 
-# AGP version to download (set during release)
+# AGP version to install
 ARG AGP_VERSION=latest
+
+# NPM registry for AGP package (default: Sonatype internal)
+ARG NPM_REGISTRY=https://repo.sonatype.com/repository/npm-all/
 
 # Install system dependencies
 # Note: bash is required for nvm, libstdc++ is required for Node.js
@@ -38,9 +41,10 @@ RUN mkdir -p $NVM_DIR \
 # Make nvm available in non-interactive shells
 ENV PATH="$NVM_DIR/versions/node/v22.13.1/bin:$PATH"
 
-# Copy AGP binary (included in repo by release workflow)
-COPY agp-linux-x64 /usr/local/bin/agp
-RUN chmod +x /usr/local/bin/agp
+# Install AGP CLI from npm registry
+RUN npm config set registry ${NPM_REGISTRY} \
+    && npm install -g @sonatype/agp@${AGP_VERSION} \
+    && npm config delete registry
 
 # Copy entrypoint script
 COPY entrypoint.sh /entrypoint.sh

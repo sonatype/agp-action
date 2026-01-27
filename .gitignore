@@ -1,7 +1,8 @@
 # Dependencies
 node_modules/
 
-# Build artifacts (agp-linux-x64 is tracked - added by release workflow)
+# AGP binary (downloaded at Docker build time from GitHub releases)
+agp-linux-x64
 
 # OS files
 .DS_Store
