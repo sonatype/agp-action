@@ -33,6 +33,37 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+## Docker Image Registry
+
+This action uses a **pre-built Docker image** instead of building from Dockerfile on every run. This significantly improves performance.
+
+### Default: Public Registry (GitHub Container Registry)
+
+By default, the action pulls from `ghcr.io/sonatype/agp:latest` (public, no authentication required):
+
+```yaml
+- uses: sonatype/agp-action@v1
+  with:
+    create-pr: true
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+### Option: Private Sonatype Registry (Internal Use)
+
+For Sonatype internal users, you can use the private registry for potentially faster pulls:
+
+```yaml
+- uses: sonatype/agp-action@v1
+  with:
+    create-pr: true
+    docker-registry: docker-all.repo.sonatype.com
+    docker-username: ${{ secrets.DOCKER_USERNAME }}
+    docker-password: ${{ secrets.DOCKER_PASSWORD }}
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -48,6 +79,9 @@ jobs:
 | `validation-commands` | No | | Commands to validate upgrades (newline-separated) |
 | `npmrc-content` | No | | Base64-encoded .npmrc content (with tokens included) |
 | `anthropic-base-url` | No | | Custom Anthropic API endpoint |
+| `docker-registry` | No | `ghcr.io` | Docker registry to pull AGP image from |
+| `docker-username` | No | | Docker registry username (for private registries only) |
+| `docker-password` | No | | Docker registry password (for private registries only) |
 | `verbose` | No | `false` | Enable verbose output |
 
 ## Environment Variables

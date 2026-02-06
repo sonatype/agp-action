@@ -8,7 +8,11 @@
 
 ## Overview
 
-The AGP GitHub Action is a Docker-based action that installs and runs the `@sonatype/agp` CLI from npm. The action itself is lightweight - all the logic is in the AGP CLI package.
+The AGP GitHub Action is a **Composite Action** that uses a pre-built Docker image containing the AGP CLI. This follows the Sonatype pattern (similar to `sonatype/actions`) and provides better performance than building the image on every run.
+
+The action pulls from one of two Docker registries:
+- **Public**: `ghcr.io/sonatype/agp:latest` (default, no auth required)
+- **Private**: `docker-all.repo.sonatype.com/sonatype/agp:latest` (Sonatype internal, requires auth)
 
 ## Repository Structure
 
@@ -29,12 +33,15 @@ agp-action/
 ## How It Works
 
 1. User references `sonatype/agp-action@v1` in their workflow
-2. GitHub Actions builds the Docker image from `Dockerfile`
-3. The Dockerfile:
-   - Uses Alpine Linux with bash, git, gh CLI
-   - Installs Node.js 20 and 22 via nvm
-   - Installs `@sonatype/agp` from Sonatype's npm registry
-4. `entrypoint.sh` runs and:
+2. GitHub Actions runs composite action steps:
+   - (Optional) Logs into Docker registry if credentials provided
+   - Pulls pre-built Docker image from registry (ghcr.io or docker-all.repo.sonatype.com)
+   - Runs Docker container with AGP CLI
+3. The Docker image contains:
+   - Alpine Linux with bash, git, gh CLI
+   - Node.js 22 (from Node base image)
+   - AGP CLI binary (compiled with Bun)
+4. `entrypoint.sh` (inside container) runs and:
    - Sets up Node.js version
    - Configures .npmrc if provided
    - Runs AGP with provided inputs
