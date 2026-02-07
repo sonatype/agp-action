@@ -106,6 +106,7 @@ runs:
       env:
         ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
         AGP_API_TOKEN: ${{ env.AGP_API_TOKEN }}
+        AGP_API_URL: ${{ env.AGP_API_URL }}
         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         INPUT_NODE_VERSION: ${{ inputs.node-version }}
@@ -135,6 +136,7 @@ runs:
           -w /github/workspace \
           -e ANTHROPIC_API_KEY \
           -e AGP_API_TOKEN \
+          -e AGP_API_URL \
           -e GITHUB_TOKEN \
           -e GITHUB_OUTPUT=/tmp/github_output \
           -e INPUT_WORKING_DIRECTORY \
