@@ -59,6 +59,14 @@ inputs:
     description: "Enable verbose output"
     required: false
     default: "false"
+  git-user-name:
+    description: "Git user name for commits"
+    required: false
+    default: "AGP Bot"
+  git-user-email:
+    description: "Git user email for commits"
+    required: false
+    default: "agp-bot@sonatype.com"
   # Docker registry configuration
   docker-registry:
     description: "Docker registry to pull AGP image from (default: ghcr.io, supports docker-all.repo.sonatype.com)"
@@ -99,6 +107,17 @@ runs:
         username: ${{ inputs.docker-username }}
         password: ${{ inputs.docker-password }}
 
+    # Install GitHub CLI for Linux (required for PR creation)
+    - name: Download GitHub CLI
+      shell: bash
+      run: |
+        echo "📥 Downloading GitHub CLI for Linux..."
+        GH_VERSION="2.69.0"
+        curl -sSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz
+        tar -xzf /tmp/gh.tar.gz -C /tmp
+        chmod +x /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh
+        echo "✅ GitHub CLI downloaded"
+
     # Run AGP using pre-built Docker image
     - name: Run AGP
       id: run-agp
@@ -120,24 +139,35 @@ runs:
         INPUT_NPMRC_CONTENT: ${{ inputs.npmrc-content }}
         INPUT_ANTHROPIC_BASE_URL: ${{ inputs.anthropic-base-url }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
+        INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
+        INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
       run: |
         # Determine Docker image to use
         REGISTRY="${{ inputs.docker-registry }}"
         IMAGE="${REGISTRY}/sonatype/agp:latest"
+        GH_VERSION="2.69.0"
 
         echo "📦 Using AGP Docker image: ${IMAGE}"
 
         # Pull the image
         docker pull "${IMAGE}"
 
-        # Run AGP container
+        # Run AGP container with gh CLI mounted
         docker run --rm \
           -v "${{ github.workspace }}:/github/workspace" \
+          -v "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh:/usr/local/bin/gh:ro" \
           -w /github/workspace \
           -e ANTHROPIC_API_KEY \
           -e AGP_API_TOKEN \
           -e AGP_API_URL \
           -e GITHUB_TOKEN \
+          -e GH_TOKEN="${{ env.GITHUB_TOKEN }}" \
+          -e GITHUB_REPOSITORY="${{ github.repository }}" \
+          -e GH_DEBUG=api \
+          -e GIT_AUTHOR_NAME="${{ inputs.git-user-name }}" \
+          -e GIT_AUTHOR_EMAIL="${{ inputs.git-user-email }}" \
+          -e GIT_COMMITTER_NAME="${{ inputs.git-user-name }}" \
+          -e GIT_COMMITTER_EMAIL="${{ inputs.git-user-email }}" \
           -e GITHUB_OUTPUT=/tmp/github_output \
           -e INPUT_WORKING_DIRECTORY \
           -e INPUT_NODE_VERSION \
@@ -151,6 +181,8 @@ runs:
           -e INPUT_NPMRC_CONTENT \
           -e INPUT_ANTHROPIC_BASE_URL \
           -e INPUT_VERBOSE \
+          -e INPUT_GIT_USER_NAME \
+          -e INPUT_GIT_USER_EMAIL \
           "${IMAGE}"
 
     # Parse outputs from AGP run (if any)
