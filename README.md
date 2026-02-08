@@ -20,6 +20,9 @@ on:
 jobs:
   upgrade:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write       # Required to push branches
+      pull-requests: write  # Required to create PRs
     steps:
       - uses: actions/checkout@v4
 
@@ -83,6 +86,8 @@ For Sonatype internal users, you can use the private registry for potentially fa
 | `docker-username` | No | | Docker registry username (for private registries only) |
 | `docker-password` | No | | Docker registry password (for private registries only) |
 | `verbose` | No | `false` | Enable verbose output |
+| `git-user-name` | No | `AGP Bot` | Git user name for commits |
+| `git-user-email` | No | `agp-bot@sonatype.com` | Git user email for commits |
 
 ## Environment Variables
 
@@ -91,6 +96,21 @@ For Sonatype internal users, you can use the private registry for potentially fa
 | `ANTHROPIC_API_KEY` | Yes | API key for Claude AI (required for AI-powered fixes) |
 | `AGP_API_TOKEN` | Yes | Token for AGP run tracking |
 | `GITHUB_TOKEN` | Yes | GitHub token for PR creation (auto-provided by GitHub) |
+
+## Repository Setup
+
+Before using this action, configure your repository to allow GitHub Actions to create pull requests:
+
+1. Go to **Repository Settings** → **Actions** → **General**
+2. Scroll to **Workflow permissions**
+3. Enable: ☑️ **"Allow GitHub Actions to create and approve pull requests"**
+4. Click **Save**
+
+Additionally, ensure the following labels exist in your repository (the action will use them to tag PRs):
+- `dependencies` - For dependency update PRs
+- `automated` - For automated changes
+
+You can create these labels manually or they will be created automatically when AGP runs.
 
 ## Outputs
 
@@ -168,6 +188,23 @@ uses: sonatype/agp-action@main
   with:
     create-pr: true
     node-version: '20'
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Custom Git Configuration
+
+Customize the Git author for commits and PRs:
+
+```yaml
+- name: Run AGP
+  uses: sonatype/agp-action@v1
+  with:
+    create-pr: true
+    git-user-name: "MyCompany Bot"
+    git-user-email: "bot@mycompany.com"
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
@@ -310,12 +347,24 @@ pr:
 
 ### PR Creation Fails
 
-**Problem:** PRs are not being created
+**Problem:** PRs are not being created, or you see: "GitHub Actions is not permitted to create or approve pull requests"
 
 **Solutions:**
-- Ensure `GITHUB_TOKEN` has write permissions for pull requests
-- For fine-grained tokens, ensure `contents: write` and `pull-requests: write` permissions
-- Check that the repository allows GitHub Actions to create PRs
+1. **Enable GitHub Actions to create PRs** (most common issue):
+   - Go to Repository Settings → Actions → General
+   - Under "Workflow permissions", enable: ☑️ "Allow GitHub Actions to create and approve pull requests"
+   - Click Save
+
+2. **Add required permissions to workflow**:
+   ```yaml
+   permissions:
+     contents: write
+     pull-requests: write
+   ```
+
+3. **Ensure labels exist**:
+   - Create `dependencies` and `automated` labels in your repository
+   - Or let AGP create them automatically on first run
 
 ### Private Registry Authentication
 
