@@ -107,18 +107,7 @@ runs:
         username: ${{ inputs.docker-username }}
         password: ${{ inputs.docker-password }}
 
-    # Install GitHub CLI for Linux (required for PR creation)
-    - name: Download GitHub CLI
-      shell: bash
-      run: |
-        echo "📥 Downloading GitHub CLI for Linux..."
-        GH_VERSION="2.69.0"
-        curl -sSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz
-        tar -xzf /tmp/gh.tar.gz -C /tmp
-        chmod +x /tmp/gh_${GH_VERSION}_linux_amd64/bin/gh
-        echo "✅ GitHub CLI downloaded"
-
-    # Run AGP using pre-built Docker image
+    # Run AGP using pre-built Docker image (includes gh CLI)
     - name: Run AGP
       id: run-agp
       shell: bash
@@ -145,17 +134,15 @@ runs:
         # Determine Docker image to use
         REGISTRY="${{ inputs.docker-registry }}"
         IMAGE="${REGISTRY}/sonatype/agp:latest"
-        GH_VERSION="2.69.0"
 
         echo "📦 Using AGP Docker image: ${IMAGE}"
 
         # Pull the image
         docker pull "${IMAGE}"
 
-        # Run AGP container with gh CLI mounted
+        # Run AGP container (gh CLI included in image)
         docker run --rm \
           -v "${{ github.workspace }}:/github/workspace" \
-          -v "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh:/usr/local/bin/gh:ro" \
           -w /github/workspace \
           -e ANTHROPIC_API_KEY \
           -e AGP_API_TOKEN \
