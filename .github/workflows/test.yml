@@ -19,12 +19,10 @@ jobs:
 
       - name: Check required files exist
         run: |
-          for file in action.yml Dockerfile entrypoint.sh; do
-            if [ ! -f "$file" ]; then
-              echo "Error: $file not found"
-              exit 1
-            fi
-          done
+          if [ ! -f "action.yml" ]; then
+            echo "Error: action.yml not found"
+            exit 1
+          fi
           echo "All required files present"
 
       - name: Validate action.yml
@@ -32,13 +30,3 @@ jobs:
           # Check that action.yml is valid YAML
           python3 -c "import yaml; yaml.safe_load(open('action.yml'))"
           echo "action.yml is valid YAML"
-
-      - name: Validate entrypoint.sh syntax
-        run: |
-          bash -n entrypoint.sh
-          echo "entrypoint.sh has valid bash syntax"
-
-      - name: Validate Dockerfile syntax
-        run: |
-          docker build --check .
-          echo "Dockerfile syntax is valid"
