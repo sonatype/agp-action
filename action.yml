@@ -51,10 +51,6 @@ inputs:
     description: "Base64-encoded .npmrc content (with tokens included)"
     required: false
     default: ""
-  anthropic-base-url:
-    description: "Custom Anthropic API endpoint"
-    required: false
-    default: ""
   verbose:
     description: "Enable verbose output"
     required: false
@@ -126,7 +122,7 @@ runs:
         INPUT_GROUP: ${{ inputs.group }}
         INPUT_VALIDATION_COMMANDS: ${{ inputs.validation-commands }}
         INPUT_NPMRC_CONTENT: ${{ inputs.npmrc-content }}
-        ANTHROPIC_BASE_URL: ${{ inputs.anthropic-base-url }}
+        ANTHROPIC_BASE_URL: ${{ env.ANTHROPIC_BASE_URL }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
