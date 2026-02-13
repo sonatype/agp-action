@@ -69,11 +69,11 @@ inputs:
     default: "agp-bot@sonatype.com"
   # Docker registry configuration
   docker-registry:
-    description: "Docker registry to pull AGP image from (default: ghcr.io, supports docker-all.repo.sonatype.com)"
+    description: "Docker registry to pull AGP image from (default: ghcr.io, supports sonatype.repo.sonatype.app/docker-all)"
     required: false
     default: "ghcr.io"
   docker-username:
-    description: "Docker registry username (required only for private registries like docker-all.repo.sonatype.com)"
+    description: "Docker registry username (required only for private registries like sonatype.repo.sonatype.app/docker-all)"
     required: false
     default: ""
   docker-password:
@@ -126,7 +126,7 @@ runs:
         INPUT_GROUP: ${{ inputs.group }}
         INPUT_VALIDATION_COMMANDS: ${{ inputs.validation-commands }}
         INPUT_NPMRC_CONTENT: ${{ inputs.npmrc-content }}
-        INPUT_ANTHROPIC_BASE_URL: ${{ inputs.anthropic-base-url }}
+        ANTHROPIC_BASE_URL: ${{ inputs.anthropic-base-url }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
@@ -145,6 +145,7 @@ runs:
           -v "${{ github.workspace }}:/github/workspace" \
           -w /github/workspace \
           -e ANTHROPIC_API_KEY \
+          -e ANTHROPIC_BASE_URL \
           -e AGP_API_TOKEN \
           -e AGP_API_URL \
           -e GITHUB_TOKEN \
@@ -166,7 +167,6 @@ runs:
           -e INPUT_GROUP \
           -e INPUT_VALIDATION_COMMANDS \
           -e INPUT_NPMRC_CONTENT \
-          -e INPUT_ANTHROPIC_BASE_URL \
           -e INPUT_VERBOSE \
           -e INPUT_GIT_USER_NAME \
           -e INPUT_GIT_USER_EMAIL \
