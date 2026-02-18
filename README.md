@@ -71,6 +71,8 @@ For Sonatype internal users, you can use the private registry for potentially fa
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
+| `mode` | No | `full` | Run mode: `full` (all updates) or `security` (only vulnerable packages) |
+| `min-severity` | No | `high` | Minimum severity for security mode: `critical`, `high`, `medium`, `low` |
 | `working-directory` | No | `.` | Directory containing package.json |
 | `node-version` | No | `22` | Node.js version (20 or 22) |
 | `create-pr` | No | `false` | Create GitHub PRs for upgrades |
@@ -120,6 +122,8 @@ You can create these labels manually or they will be created automatically when 
 | `groups-upgraded` | Number of groups successfully upgraded |
 | `groups-failed` | Number of groups that failed |
 | `pr-urls` | JSON array of created PR URLs |
+| `vulnerabilities-found` | Whether vulnerabilities were found (security mode only) |
+| `vulnerable-packages` | JSON array of vulnerable packages processed (security mode only) |
 
 ## Versioning
 
@@ -137,6 +141,48 @@ uses: sonatype/agp-action@main
 ```
 
 ## Usage Examples
+
+### Security Mode (Vulnerability Fixes Only)
+
+Fix only packages with known security vulnerabilities detected by Dependabot:
+
+```yaml
+name: Security Fixes
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 6am
+  workflow_dispatch:
+
+jobs:
+  security-fixes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      security-events: read  # Required to read Dependabot alerts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fix Security Vulnerabilities
+        uses: sonatype/agp-action@v1
+        with:
+          mode: security
+          min-severity: high  # Fix critical and high severity only
+          create-pr: true
+          validation-commands: |
+            npm run build
+            npm test
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+**What happens in security mode:**
+1. AGP queries the Dependabot alerts API for open vulnerabilities
+2. Filters alerts by severity (default: `high` and above)
+3. Only processes upgrade groups that contain vulnerable packages
+4. Creates PRs with security context (CVE IDs, severity, etc.)
 
 ### Basic Usage with PR Creation
 
