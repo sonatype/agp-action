@@ -72,7 +72,7 @@ For Sonatype internal users, you can use the private registry for potentially fa
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `mode` | No | `full` | Run mode: `full` (all updates) or `security` (only vulnerable packages) |
-| `min-severity` | No | `high` | Minimum severity for security mode: `critical`, `high`, `medium`, `low` |
+| `vulnerabilities` | No | | JSON array of vulnerabilities to fix (for security mode, provided via workflow_dispatch) |
 | `working-directory` | No | `.` | Directory containing package.json |
 | `node-version` | No | `22` | Node.js version (20 or 22) |
 | `create-pr` | No | `false` | Create GitHub PRs for upgrades |
@@ -122,8 +122,6 @@ You can create these labels manually or they will be created automatically when 
 | `groups-upgraded` | Number of groups successfully upgraded |
 | `groups-failed` | Number of groups that failed |
 | `pr-urls` | JSON array of created PR URLs |
-| `vulnerabilities-found` | Whether vulnerabilities were found (security mode only) |
-| `vulnerable-packages` | JSON array of vulnerable packages processed (security mode only) |
 
 ## Versioning
 
@@ -144,14 +142,22 @@ uses: sonatype/agp-action@main
 
 ### Security Mode (Vulnerability Fixes Only)
 
-Fix only packages with known security vulnerabilities detected by Dependabot:
+Security mode is designed to be triggered by **Sonatype Guide** when vulnerabilities are discovered. Guide dispatches the workflow with vulnerability data, and AGP fixes only those specific packages.
+
+**Workflow setup for Guide integration:**
 
 ```yaml
-name: Security Fixes
+name: AGP Security Fixes
 on:
-  schedule:
-    - cron: '0 6 * * *'  # Daily at 6am
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: false
+        default: 'full'
+      vulnerabilities:
+        description: 'JSON array of vulnerabilities (provided by Guide)'
+        required: false
 
 jobs:
   security-fixes:
@@ -159,15 +165,14 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      security-events: read  # Required to read Dependabot alerts
     steps:
       - uses: actions/checkout@v4
 
       - name: Fix Security Vulnerabilities
         uses: sonatype/agp-action@v1
         with:
-          mode: security
-          min-severity: high  # Fix critical and high severity only
+          mode: ${{ github.event.inputs.mode }}
+          vulnerabilities: ${{ github.event.inputs.vulnerabilities }}
           create-pr: true
           validation-commands: |
             npm run build
@@ -179,10 +184,23 @@ jobs:
 ```
 
 **What happens in security mode:**
-1. AGP queries the Dependabot alerts API for open vulnerabilities
-2. Filters alerts by severity (default: `high` and above)
-3. Only processes upgrade groups that contain vulnerable packages
+1. Sonatype Guide detects a vulnerability affecting your project
+2. Guide triggers the workflow via GitHub API with vulnerability data
+3. AGP filters recommendations to only affected packages
 4. Creates PRs with security context (CVE IDs, severity, etc.)
+
+**Vulnerability data format:**
+```json
+[
+  {
+    "name": "lodash",
+    "severity": "high",
+    "cveId": "CVE-2021-23337",
+    "ghsaId": "GHSA-35jh-r3h4-6jhm",
+    "summary": "Prototype pollution in lodash"
+  }
+]
+```
 
 ### Basic Usage with PR Creation
 

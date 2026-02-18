@@ -15,10 +15,10 @@ inputs:
     description: "Run mode: 'full' (all updates) or 'security' (only vulnerable packages)"
     required: false
     default: "full"
-  min-severity:
-    description: "Minimum severity for security mode: critical, high, medium, low"
+  vulnerabilities:
+    description: "JSON array of vulnerabilities to fix (for security mode, typically provided by Guide via workflow_dispatch)"
     required: false
-    default: "high"
+    default: ""
   working-directory:
     description: "Directory containing package.json"
     required: false
@@ -98,12 +98,6 @@ outputs:
   pr-urls:
     description: "JSON array of created PR URLs"
     value: ${{ steps.parse-outputs.outputs.pr-urls }}
-  vulnerabilities-found:
-    description: "Whether vulnerabilities were found (security mode only)"
-    value: ${{ steps.get-vulns.outputs.has_vulns }}
-  vulnerable-packages:
-    description: "JSON array of vulnerable packages processed (security mode only)"
-    value: ${{ steps.get-vulns.outputs.vulnerable_packages }}
 
 runs:
   using: "composite"
@@ -117,58 +111,10 @@ runs:
         username: ${{ inputs.docker-username }}
         password: ${{ inputs.docker-password }}
 
-    # Query Dependabot alerts for security mode
-    - name: Get Vulnerable Packages
-      id: get-vulns
-      if: ${{ inputs.mode == 'security' }}
-      shell: bash
-      env:
-        GH_TOKEN: ${{ env.GITHUB_TOKEN }}
-        MIN_SEVERITY: ${{ inputs.min-severity }}
-      run: |
-        echo "🔒 Security mode: Querying Dependabot alerts..."
-
-        # Build severity filter - include requested severity and above
-        case "$MIN_SEVERITY" in
-          critical) SEVERITIES='"critical"' ;;
-          high)     SEVERITIES='"critical","high"' ;;
-          medium)   SEVERITIES='"critical","high","medium"' ;;
-          low)      SEVERITIES='"critical","high","medium","low"' ;;
-          *)        SEVERITIES='"critical","high"' ;;
-        esac
-
-        # Query Dependabot alerts API
-        ALERTS=$(gh api repos/${{ github.repository }}/dependabot/alerts \
-          --jq "[.[] | select(.state == \"open\") | select(.security_advisory.severity | IN($SEVERITIES)) | {
-            name: .dependency.package.name,
-            currentVersion: .dependency.package.version,
-            severity: .security_advisory.severity,
-            cveId: .security_advisory.cve_id,
-            ghsaId: .security_advisory.ghsa_id,
-            summary: .security_advisory.summary,
-            patchedVersions: .security_vulnerability.first_patched_version.identifier
-          }]" 2>/dev/null || echo "[]")
-
-        # Count alerts
-        ALERT_COUNT=$(echo "$ALERTS" | jq 'length')
-        echo "📊 Found $ALERT_COUNT vulnerable packages (severity >= $MIN_SEVERITY)"
-
-        if [ "$ALERT_COUNT" -eq 0 ]; then
-          echo "✅ No vulnerable packages found - nothing to fix!"
-          echo "has_vulns=false" >> $GITHUB_OUTPUT
-          echo "vulnerable_packages=[]" >> $GITHUB_OUTPUT
-        else
-          echo "🔍 Vulnerable packages:"
-          echo "$ALERTS" | jq -r '.[] | "  - \(.name) (\(.severity)): \(.cveId // .ghsaId // "N/A")"'
-          echo "has_vulns=true" >> $GITHUB_OUTPUT
-          # Escape for shell - use base64 to avoid JSON parsing issues
-          echo "vulnerable_packages=$(echo "$ALERTS" | base64 -w0)" >> $GITHUB_OUTPUT
-        fi
-
     # Run AGP using pre-built Docker image (includes gh CLI)
     - name: Run AGP
       id: run-agp
-      if: ${{ inputs.mode != 'security' || steps.get-vulns.outputs.has_vulns == 'true' }}
+      if: ${{ inputs.mode != 'security' || inputs.vulnerabilities != '' }}
       shell: bash
       env:
         ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
@@ -176,7 +122,7 @@ runs:
         AGP_API_URL: ${{ env.AGP_API_URL }}
         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
         INPUT_MODE: ${{ inputs.mode }}
-        INPUT_VULNERABLE_PACKAGES_B64: ${{ steps.get-vulns.outputs.vulnerable_packages }}
+        INPUT_VULNERABILITIES: ${{ inputs.vulnerabilities }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         INPUT_NODE_VERSION: ${{ inputs.node-version }}
         INPUT_CREATE_PR: ${{ inputs.create-pr }}
@@ -201,10 +147,10 @@ runs:
         # Pull the image
         docker pull "${IMAGE}"
 
-        # Decode vulnerable packages if in security mode
+        # Use vulnerabilities input for security mode
         VULN_PACKAGES=""
-        if [ "$INPUT_MODE" = "security" ] && [ -n "$INPUT_VULNERABLE_PACKAGES_B64" ]; then
-          VULN_PACKAGES=$(echo "$INPUT_VULNERABLE_PACKAGES_B64" | base64 -d)
+        if [ "$INPUT_MODE" = "security" ] && [ -n "$INPUT_VULNERABILITIES" ]; then
+          VULN_PACKAGES="$INPUT_VULNERABILITIES"
           echo "🔒 Security mode: passing $(echo "$VULN_PACKAGES" | jq 'length') vulnerable packages to CLI"
         fi
 
