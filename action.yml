@@ -11,6 +11,14 @@ branding:
   color: "blue"
 
 inputs:
+  mode:
+    description: "Run mode: 'full' (all updates) or 'security' (only vulnerable packages)"
+    required: false
+    default: "full"
+  vulnerabilities:
+    description: "JSON array of vulnerabilities to fix (for security mode, typically provided by Guide via workflow_dispatch)"
+    required: false
+    default: ""
   working-directory:
     description: "Directory containing package.json"
     required: false
@@ -106,12 +114,15 @@ runs:
     # Run AGP using pre-built Docker image (includes gh CLI)
     - name: Run AGP
       id: run-agp
+      if: ${{ inputs.mode != 'security' || inputs.vulnerabilities != '' }}
       shell: bash
       env:
         ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
         AGP_API_TOKEN: ${{ env.AGP_API_TOKEN }}
         AGP_API_URL: ${{ env.AGP_API_URL }}
         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_VULNERABILITIES: ${{ inputs.vulnerabilities }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         INPUT_NODE_VERSION: ${{ inputs.node-version }}
         INPUT_CREATE_PR: ${{ inputs.create-pr }}
@@ -136,6 +147,13 @@ runs:
         # Pull the image
         docker pull "${IMAGE}"
 
+        # Use vulnerabilities input for security mode
+        VULN_PACKAGES=""
+        if [ "$INPUT_MODE" = "security" ] && [ -n "$INPUT_VULNERABILITIES" ]; then
+          VULN_PACKAGES="$INPUT_VULNERABILITIES"
+          echo "🔒 Security mode: passing $(echo "$VULN_PACKAGES" | jq 'length') vulnerable packages to CLI"
+        fi
+
         # Run AGP container (gh CLI included in image)
         docker run --rm \
           -v "${{ github.workspace }}:/github/workspace" \
@@ -153,6 +171,8 @@ runs:
           -e GIT_COMMITTER_NAME="${{ inputs.git-user-name }}" \
           -e GIT_COMMITTER_EMAIL="${{ inputs.git-user-email }}" \
           -e GITHUB_OUTPUT=/tmp/github_output \
+          -e INPUT_MODE \
+          -e INPUT_VULNERABLE_PACKAGES="$VULN_PACKAGES" \
           -e INPUT_WORKING_DIRECTORY \
           -e INPUT_NODE_VERSION \
           -e INPUT_CREATE_PR \

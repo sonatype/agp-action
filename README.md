@@ -71,6 +71,8 @@ For Sonatype internal users, you can use the private registry for potentially fa
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
+| `mode` | No | `full` | Run mode: `full` (all updates) or `security` (only vulnerable packages) |
+| `vulnerabilities` | No | | JSON array of vulnerabilities to fix (for security mode, provided via workflow_dispatch) |
 | `working-directory` | No | `.` | Directory containing package.json |
 | `node-version` | No | `22` | Node.js version (20 or 22) |
 | `create-pr` | No | `false` | Create GitHub PRs for upgrades |
@@ -137,6 +139,68 @@ uses: sonatype/agp-action@main
 ```
 
 ## Usage Examples
+
+### Security Mode (Vulnerability Fixes Only)
+
+Security mode is designed to be triggered by **Sonatype Guide** when vulnerabilities are discovered. Guide dispatches the workflow with vulnerability data, and AGP fixes only those specific packages.
+
+**Workflow setup for Guide integration:**
+
+```yaml
+name: AGP Security Fixes
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: false
+        default: 'full'
+      vulnerabilities:
+        description: 'JSON array of vulnerabilities (provided by Guide)'
+        required: false
+
+jobs:
+  security-fixes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fix Security Vulnerabilities
+        uses: sonatype/agp-action@v1
+        with:
+          mode: ${{ github.event.inputs.mode }}
+          vulnerabilities: ${{ github.event.inputs.vulnerabilities }}
+          create-pr: true
+          validation-commands: |
+            npm run build
+            npm test
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+**What happens in security mode:**
+1. Sonatype Guide detects a vulnerability affecting your project
+2. Guide triggers the workflow via GitHub API with vulnerability data
+3. AGP filters recommendations to only affected packages
+4. Creates PRs with security context (CVE IDs, severity, etc.)
+
+**Vulnerability data format:**
+```json
+[
+  {
+    "name": "lodash",
+    "severity": "high",
+    "cveId": "CVE-2021-23337",
+    "ghsaId": "GHSA-35jh-r3h4-6jhm",
+    "summary": "Prototype pollution in lodash"
+  }
+]
+```
 
 ### Basic Usage with PR Creation
 
