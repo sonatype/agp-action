@@ -152,12 +152,25 @@ runs:
         if [ "$INPUT_MODE" = "security" ] && [ -n "$INPUT_VULNERABILITIES" ]; then
           VULN_PACKAGES="$INPUT_VULNERABILITIES"
           echo "🔒 Security mode: passing $(echo "$VULN_PACKAGES" | jq 'length') vulnerable packages to CLI"
+        else
+          echo "DEBUG: Security mode check failed - mode='$INPUT_MODE', has_vulns=$([ -n "$INPUT_VULNERABILITIES" ] && echo 'yes' || echo 'no')"
+        fi
+
+        # Debug: show what inputs we received
+        echo "DEBUG: INPUT_MODE='$INPUT_MODE'"
+        echo "DEBUG: INPUT_VULNERABILITIES length=$(echo "$INPUT_VULNERABILITIES" | wc -c)"
+        if [ -n "$INPUT_VULNERABILITIES" ]; then
+          echo "DEBUG: INPUT_VULNERABILITIES first 200 chars: ${INPUT_VULNERABILITIES:0:200}"
         fi
 
         # Run AGP container (gh CLI included in image)
+        # Note: We add git safe.directory config to handle GitHub Actions checkout
         docker run --rm \
           -v "${{ github.workspace }}:/github/workspace" \
           -w /github/workspace \
+          -e GIT_CONFIG_COUNT=1 \
+          -e GIT_CONFIG_KEY_0=safe.directory \
+          -e GIT_CONFIG_VALUE_0=/github/workspace \
           -e ANTHROPIC_API_KEY \
           -e ANTHROPIC_BASE_URL \
           -e AGP_API_TOKEN \
