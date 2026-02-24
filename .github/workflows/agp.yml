@@ -1,0 +1,47 @@
+#
+# Sonatype Guide - Agentic Patches Workflow
+# This workflow was automatically created by the Sonatype Guide GitHub App.
+# Learn more: https://guide.sonatype.com
+#
+
+name: Sonatype Guide - Agentic Patches
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: false
+        default: 'standard'
+        type: choice
+        options:
+          - standard
+          - security
+      vulnerabilities:
+        description: 'Vulnerable packages JSON (for security mode)'
+        required: false
+        type: string
+
+concurrency:
+  group: agp-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  agp:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Sonatype Guide AGP
+        uses: sonatype/agp-action@v1
+        with:
+          mode: ${{ inputs.mode }}
+          vulnerabilities: ${{ inputs.vulnerabilities }}
+          create-pr: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
