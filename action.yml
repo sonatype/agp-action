@@ -76,6 +76,10 @@ inputs:
     description: "Docker registry to pull AGP image from (default: ghcr.io, supports sonatype.repo.sonatype.app/docker-all)"
     required: false
     default: "ghcr.io"
+  docker-tag:
+    description: "Docker image tag to use (default: latest)"
+    required: false
+    default: "latest"
   docker-username:
     description: "Docker registry username (required only for private registries like sonatype.repo.sonatype.app/docker-all)"
     required: false
@@ -140,7 +144,7 @@ runs:
       run: |
         # Determine Docker image to use
         REGISTRY="${{ inputs.docker-registry }}"
-        IMAGE="${REGISTRY}/sonatype/agp:latest"
+        IMAGE="${REGISTRY}/sonatype/agp:${{ inputs.docker-tag }}"
 
         echo "📦 Using AGP Docker image: ${IMAGE}"
 
