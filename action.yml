@@ -71,7 +71,11 @@ inputs:
     description: "Git user email for commits"
     required: false
     default: "agp-bot@sonatype.com"
-  # Docker registry configuration
+  # Docker image configuration
+  docker-image:
+    description: "Full Docker image name to use (overrides docker-registry and docker-tag, e.g. johnsoma/agp:latest)"
+    required: false
+    default: ""
   docker-registry:
     description: "Docker registry to pull AGP image from (default: ghcr.io, supports sonatype.repo.sonatype.app/docker-all)"
     required: false
@@ -143,8 +147,12 @@ runs:
         INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
       run: |
         # Determine Docker image to use
-        REGISTRY="${{ inputs.docker-registry }}"
-        IMAGE="${REGISTRY}/sonatype/agp:${{ inputs.docker-tag }}"
+        if [ -n "${{ inputs.docker-image }}" ]; then
+          IMAGE="${{ inputs.docker-image }}"
+        else
+          REGISTRY="${{ inputs.docker-registry }}"
+          IMAGE="${REGISTRY}/sonatype/agp:${{ inputs.docker-tag }}"
+        fi
 
         echo "📦 Using AGP Docker image: ${IMAGE}"
 
