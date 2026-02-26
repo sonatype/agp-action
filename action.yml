@@ -183,6 +183,8 @@ runs:
           -e GH_TOKEN="${{ env.GITHUB_TOKEN }}" \
           -e GITHUB_REPOSITORY="${{ github.repository }}" \
           -e GITHUB_ACTIONS=true \
+          -e ACTIONS_ID_TOKEN_REQUEST_URL \
+          -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
           -e GH_DEBUG=api \
           -e GIT_AUTHOR_NAME="${{ inputs.git-user-name }}" \
           -e GIT_AUTHOR_EMAIL="${{ inputs.git-user-email }}" \
