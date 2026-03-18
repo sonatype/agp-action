@@ -76,6 +76,10 @@ inputs:
     description: "Docker image to use (e.g. ghcr.io/sonatype/agp:latest)"
     required: false
     default: "ghcr.io/sonatype/agp:latest"
+  docker-registry:
+    description: "Docker registry URL for authentication (e.g. sonatype.repo.sonatype.app/docker-all)"
+    required: false
+    default: ""
   docker-username:
     description: "Docker registry username (required only for private registries like sonatype.repo.sonatype.app/docker-all)"
     required: false
