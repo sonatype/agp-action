@@ -77,9 +77,13 @@ inputs:
     default: "agp-bot@sonatype.com"
   # Docker image configuration
   docker-image:
-    description: "Docker image to use (e.g. ghcr.io/sonatype/agp:latest)"
+    description: "Full Docker image path (e.g. ghcr.io/sonatype/agp:latest). Ignored if image-tag is provided."
     required: false
     default: "ghcr.io/sonatype/agp:latest"
+  image-tag:
+    description: "Docker image tag (e.g. latest, v1.0.0). When provided, constructs full path as {docker-registry}/agp:{image-tag}"
+    required: false
+    default: ""
   docker-registry:
     description: "Docker registry URL for authentication (e.g. sonatype.repo.sonatype.app/docker-all)"
     required: false
@@ -147,7 +151,12 @@ runs:
         INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
       run: |
-        IMAGE="${{ inputs.docker-image }}"
+        # Determine Docker image: use image-tag with registry if provided, otherwise use docker-image
+        if [ -n "${{ inputs.image-tag }}" ]; then
+          IMAGE="${{ inputs.docker-registry }}/agp:${{ inputs.image-tag }}"
+        else
+          IMAGE="${{ inputs.docker-image }}"
+        fi
         echo "📦 Using AGP Docker image: ${IMAGE}"
         docker pull "${IMAGE}"
 
