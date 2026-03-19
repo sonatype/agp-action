@@ -59,6 +59,10 @@ inputs:
     description: "Base64-encoded .npmrc content (with tokens included)"
     required: false
     default: ""
+  maven-settings-xml:
+    description: "Maven settings.xml content for private repository authentication"
+    required: false
+    default: ""
   verbose:
     description: "Enable verbose output"
     required: false
@@ -137,6 +141,7 @@ runs:
         INPUT_GROUP: ${{ inputs.group }}
         INPUT_VALIDATION_COMMANDS: ${{ inputs.validation-commands }}
         INPUT_NPMRC_CONTENT: ${{ inputs.npmrc-content }}
+        INPUT_MAVEN_SETTINGS_XML: ${{ inputs.maven-settings-xml }}
         ANTHROPIC_BASE_URL: ${{ env.ANTHROPIC_BASE_URL }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
@@ -162,10 +167,24 @@ runs:
           echo "DEBUG: INPUT_VULNERABILITIES first 200 chars: ${INPUT_VULNERABILITIES:0:200}"
         fi
 
+        # Create Maven settings.xml if provided
+        MVN_SETTINGS_MOUNT=""
+        MVN_SETTINGS_ENV=""
+        if [ -n "$INPUT_MAVEN_SETTINGS_XML" ]; then
+          MAVEN_SETTINGS_PATH="${RUNNER_TEMP}/maven-settings.xml"
+          printf '%s\n' "$INPUT_MAVEN_SETTINGS_XML" > "$MAVEN_SETTINGS_PATH"
+          chmod 600 "$MAVEN_SETTINGS_PATH"
+          echo "📦 Created Maven settings.xml for private repository authentication"
+          MVN_SETTINGS_MOUNT="-v ${MAVEN_SETTINGS_PATH}:/home/agp/.m2/settings.xml:ro"
+          MVN_SETTINGS_ENV="-e MVN_SETTINGS=/home/agp/.m2/settings.xml"
+        fi
+
         # Run AGP container (gh CLI included in image)
         # Note: We add git safe.directory config to handle GitHub Actions checkout
+        # shellcheck disable=SC2086
         docker run --rm \
           -v "${{ github.workspace }}:/github/workspace" \
+          ${MVN_SETTINGS_MOUNT} \
           -w /github/workspace \
           -e GIT_CONFIG_COUNT=1 \
           -e GIT_CONFIG_KEY_0=safe.directory \
@@ -206,6 +225,7 @@ runs:
           -e INPUT_VERBOSE \
           -e INPUT_GIT_USER_NAME \
           -e INPUT_GIT_USER_EMAIL \
+          ${MVN_SETTINGS_ENV} \
           "${IMAGE}"
 
     # Parse outputs from AGP run (if any)
