@@ -153,12 +153,9 @@ runs:
       run: |
         # Determine Docker image: use image-tag with registry if provided, otherwise use docker-image
         if [ -n "${{ inputs.image-tag }}" ]; then
-          # Registry format: sonatype.repo.sonatype.app/docker-all -> sonatype.repo.sonatype.app
-          # Image path: sonatype/agp:tag
-          REGISTRY_HOST="${{ inputs.docker-registry }}"
-          REGISTRY_HOST="${REGISTRY_HOST%/docker-all}"  # Remove /docker-all suffix if present
-          REGISTRY_HOST="${REGISTRY_HOST%/docker-internal}"  # Remove /docker-internal suffix if present
-          IMAGE="${REGISTRY_HOST}/sonatype/agp:${{ inputs.image-tag }}"
+          # Image stored as sonatype/agp in Nexus, accessed via docker-all group
+          # Full path: sonatype.repo.sonatype.app/docker-all/sonatype/agp:tag
+          IMAGE="${{ inputs.docker-registry }}/sonatype/agp:${{ inputs.image-tag }}"
         else
           IMAGE="${{ inputs.docker-image }}"
         fi
