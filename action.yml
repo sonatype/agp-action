@@ -184,7 +184,8 @@ runs:
         if [ -n "$INPUT_MAVEN_SETTINGS_XML" ]; then
           MAVEN_SETTINGS_PATH="${RUNNER_TEMP}/maven-settings.xml"
           printf '%s\n' "$INPUT_MAVEN_SETTINGS_XML" > "$MAVEN_SETTINGS_PATH"
-          chmod 600 "$MAVEN_SETTINGS_PATH"
+          # Use 644 instead of 600 so the agp user (uid 10000) inside Docker can read it
+          chmod 644 "$MAVEN_SETTINGS_PATH"
           echo "📦 Created Maven settings.xml for private repository authentication"
           MVN_SETTINGS_MOUNT="-v ${MAVEN_SETTINGS_PATH}:/home/agp/.m2/settings.xml:ro"
           MVN_SETTINGS_ENV="-e MVN_SETTINGS=/home/agp/.m2/settings.xml"
