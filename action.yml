@@ -153,7 +153,12 @@ runs:
       run: |
         # Determine Docker image: use image-tag with registry if provided, otherwise use docker-image
         if [ -n "${{ inputs.image-tag }}" ]; then
-          IMAGE="${{ inputs.docker-registry }}/agp:${{ inputs.image-tag }}"
+          # Registry format: sonatype.repo.sonatype.app/docker-all -> sonatype.repo.sonatype.app
+          # Image path: sonatype/agp:tag
+          REGISTRY_HOST="${{ inputs.docker-registry }}"
+          REGISTRY_HOST="${REGISTRY_HOST%/docker-all}"  # Remove /docker-all suffix if present
+          REGISTRY_HOST="${REGISTRY_HOST%/docker-internal}"  # Remove /docker-internal suffix if present
+          IMAGE="${REGISTRY_HOST}/sonatype/agp:${{ inputs.image-tag }}"
         else
           IMAGE="${{ inputs.docker-image }}"
         fi
