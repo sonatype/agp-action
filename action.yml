@@ -156,6 +156,9 @@ runs:
           # Image stored as sonatype/agp in Nexus, accessed via docker-all group
           # Full path: sonatype.repo.sonatype.app/docker-all/sonatype/agp:tag
           IMAGE="${{ inputs.docker-registry }}/sonatype/agp:${{ inputs.image-tag }}"
+        elif [ -n "${{ inputs.docker-registry }}" ]; then
+          # Use docker-registry with :latest tag when image-tag not provided
+          IMAGE="${{ inputs.docker-registry }}/sonatype/agp:latest"
         else
           IMAGE="${{ inputs.docker-image }}"
         fi
