@@ -67,6 +67,10 @@ inputs:
     description: "Enable verbose output"
     required: false
     default: "false"
+  model:
+    description: "AI model name override (e.g., us.anthropic.claude-sonnet-4-6). Takes precedence over agp.yml config."
+    required: false
+    default: ""
   git-user-name:
     description: "Git user name for commits"
     required: false
@@ -169,6 +173,7 @@ runs:
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+        AGP_AGENT_MODEL: ${{ inputs.model }}
       run: |
         # Determine Docker image: use image-tag with registry if provided, otherwise use docker-image
         if [ -n "${{ inputs.image-tag }}" ]; then
@@ -243,6 +248,7 @@ runs:
           -e AWS_SESSION_TOKEN \
           -e AWS_REGION \
           -e AWS_DEFAULT_REGION \
+          -e AGP_AGENT_MODEL \
           -e GIT_AUTHOR_NAME="${{ inputs.git-user-name }}" \
           -e GIT_AUTHOR_EMAIL="${{ inputs.git-user-email }}" \
           -e GIT_COMMITTER_NAME="${{ inputs.git-user-name }}" \
