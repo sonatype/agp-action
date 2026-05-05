@@ -67,14 +67,32 @@ inputs:
     description: "Enable verbose output"
     required: false
     default: "false"
+  # --------------------------------------------------------------------------
+  # Authentication for pushing commits and opening PRs
+  #
+  # By default the action mints a short-lived GitHub App installation access
+  # token for the Sonatype Guide App via Sonatype Guide's OIDC token broker
+  # (https://api.guide.sonatype.com/agp/installation-token). The resulting
+  # token produces PRs authored by sonatype-guide[bot] with the Verified bot
+  # badge on commits. The Sonatype Guide App must be installed on the target
+  # repository, and the job must declare `permissions: id-token: write`.
+  #
+  # To opt out of the broker (air-gapped runners, GHES without OIDC, CI
+  # debugging), set `github-token` to a PAT or GITHUB_TOKEN from the workflow.
+  # In that case PRs will be authored by whoever owns the supplied token.
+  # --------------------------------------------------------------------------
+  github-token:
+    description: "Override for the token used to push commits and open PRs. When unset, the action mints one from the Sonatype Guide OIDC broker so PRs open as sonatype-guide[bot]."
+    required: false
+    default: ""
   git-user-name:
-    description: "Git user name for commits"
+    description: "Git user name for commits. Leave blank to match the authenticating identity (sonatype-guide[bot] when the broker is used)."
     required: false
-    default: "AGP Bot"
+    default: ""
   git-user-email:
-    description: "Git user email for commits"
+    description: "Git user email for commits. Leave blank to match the authenticating identity — e.g. <user-id>+sonatype-guide[bot]@users.noreply.github.com, which is required for GitHub to show the Verified bot badge on commits."
     required: false
-    default: "agp-bot@sonatype.com"
+    default: ""
   # Docker image configuration
   docker-image:
     description: "Full Docker image path (e.g. ghcr.io/sonatype/agp:latest). Ignored if image-tag is provided."
@@ -142,6 +160,133 @@ runs:
         username: ${{ inputs.docker-username }}
         password: ${{ inputs.docker-password }}
 
+    # Acquire the token and commit identity used for git push and PR creation.
+    #
+    # Default path: exchange the GitHub Actions OIDC JWT for a short-lived
+    # GitHub App installation token via Sonatype Guide's broker. The token is
+    # scoped to the current repo with contents:write + pull_requests:write
+    # and produces PRs authored by sonatype-guide[bot] with the Verified bot
+    # badge on commits. Requires `permissions: id-token: write` on the job.
+    #
+    # Override path: `github-token` input. Used for air-gapped runners, GHES
+    # without OIDC federation, or local debugging. PRs in that case are
+    # authored by whoever owns the supplied token.
+    - name: Prepare GitHub authentication
+      id: prepare-auth
+      shell: bash
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
+        INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+      run: |
+        set -euo pipefail
+
+        TOKEN=""
+        GIT_NAME="$INPUT_GIT_USER_NAME"
+        GIT_EMAIL="$INPUT_GIT_USER_EMAIL"
+        AUTH_SOURCE="unknown"
+
+        if [ -n "$INPUT_GITHUB_TOKEN" ]; then
+          # Explicit override: customer passed a PAT or workflow-scoped token.
+          # Do NOT fall through to the broker if this is set, even if OIDC is
+          # also available — the input is the customer's way to opt out.
+          TOKEN="$INPUT_GITHUB_TOKEN"
+          AUTH_SOURCE="github-token input"
+          echo "🔑 Using customer-supplied github-token input"
+        elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+          echo "🔑 Acquiring installation token via Sonatype Guide OIDC broker"
+          API_URL="${AGP_API_URL:-https://api.guide.sonatype.com}"
+
+          # Step 1: request an OIDC JWT from the GitHub Actions runtime.
+          OIDC_JWT=$(curl -fsSL \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://guide.sonatype.com" \
+            | jq -r '.value // empty')
+          if [ -z "$OIDC_JWT" ]; then
+            echo "::error::Failed to acquire GitHub Actions OIDC token."
+            echo "Ensure the job declares: permissions: { id-token: write }"
+            exit 1
+          fi
+          echo "::add-mask::$OIDC_JWT"
+
+          # Step 2: exchange the JWT for a scoped installation token.
+          RESP_BODY=$(mktemp)
+          trap 'rm -f "$RESP_BODY"' EXIT
+          RESP_STATUS=$(curl -sS -o "$RESP_BODY" -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $OIDC_JWT" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            --data '{}' \
+            "${API_URL}/agp/installation-token")
+          if [ "$RESP_STATUS" != "200" ]; then
+            echo "::error::Sonatype Guide token broker returned HTTP $RESP_STATUS"
+            echo "Response: $(cat "$RESP_BODY")"
+            echo ""
+            echo "Common causes:"
+            echo "  - The Sonatype Guide GitHub App is not installed on this repository."
+            echo "    Install it: https://github.com/apps/sonatype-guide"
+            echo "  - The job is not running via sonatype/agp-action (required by"
+            echo "    the broker's job_workflow_ref policy)."
+            echo "  - The job is missing 'permissions: id-token: write'."
+            exit 1
+          fi
+          TOKEN=$(jq -r '.token // empty' "$RESP_BODY")
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Sonatype Guide token broker response missing 'token' field"
+            echo "Response: $(cat "$RESP_BODY")"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          AUTH_SOURCE="sonatype-guide[bot] via OIDC broker"
+
+          # Step 3: default commit identity to sonatype-guide[bot] when the
+          # broker minted the token. The numeric user ID is required so
+          # GitHub shows the 'Verified · by sonatype-guide[bot]' badge on
+          # commits (this is the documented formula from GitHub's
+          # actions/create-github-app-token README).
+          if [ -z "$GIT_NAME" ]; then
+            GIT_NAME="sonatype-guide[bot]"
+          fi
+          if [ -z "$GIT_EMAIL" ]; then
+            BOT_USER_ID=$(curl -fsSL \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/users/sonatype-guide%5Bbot%5D" \
+              | jq -r '.id // empty')
+            if [ -z "$BOT_USER_ID" ]; then
+              echo "::warning::Could not resolve sonatype-guide[bot] user ID; falling back to app email without numeric prefix. The Verified bot badge will not appear on commits."
+              GIT_EMAIL="sonatype-guide[bot]@users.noreply.github.com"
+            else
+              GIT_EMAIL="${BOT_USER_ID}+sonatype-guide[bot]@users.noreply.github.com"
+            fi
+          fi
+        elif [ -n "${GITHUB_TOKEN:-}" ]; then
+          # Legacy backward-compat path: workflow exported env.GITHUB_TOKEN the
+          # old way (no id-token: write declared, no github-token input given).
+          # PRs produced this way will be authored by whoever owns the token
+          # — typically github-actions[bot]. We warn, but we do not fail so
+          # existing workflows keep working until they migrate.
+          TOKEN="$GITHUB_TOKEN"
+          AUTH_SOURCE="env.GITHUB_TOKEN (legacy)"
+          echo "::warning::Using env.GITHUB_TOKEN (legacy). PRs will not be authored by sonatype-guide[bot]. To switch: add 'permissions: id-token: write' to the job and remove the GITHUB_TOKEN env var."
+        else
+          echo "::error::No github-token provided and GitHub Actions OIDC is unavailable."
+          echo "Either set 'permissions: { id-token: write }' on the job (recommended),"
+          echo "or pass a 'github-token' input with the desired write-scoped token."
+          exit 1
+        fi
+
+        # Fallback identity when broker is NOT used and customer didn't override:
+        # keep the historical defaults so pre-existing workflows still work.
+        [ -z "$GIT_NAME" ] && GIT_NAME="AGP Bot"
+        [ -z "$GIT_EMAIL" ] && GIT_EMAIL="agp-bot@sonatype.com"
+
+        echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+        echo "git-user-name=$GIT_NAME" >> "$GITHUB_OUTPUT"
+        echo "git-user-email=$GIT_EMAIL" >> "$GITHUB_OUTPUT"
+        echo "auth-source=$AUTH_SOURCE" >> "$GITHUB_OUTPUT"
+        echo "✅ Authenticated as: $AUTH_SOURCE"
+        echo "   git user: $GIT_NAME <$GIT_EMAIL>"
+
     # Run AGP using pre-built Docker image (includes gh CLI)
     - name: Run AGP
       id: run-agp
@@ -151,7 +296,7 @@ runs:
         ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
         AGP_API_TOKEN: ${{ env.AGP_API_TOKEN }}
         AGP_API_URL: ${{ env.AGP_API_URL }}
-        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ steps.prepare-auth.outputs.token }}
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_VULNERABILITIES: ${{ inputs.vulnerabilities }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
@@ -167,8 +312,8 @@ runs:
         INPUT_MAVEN_SETTINGS_XML: ${{ inputs.maven-settings-xml }}
         ANTHROPIC_BASE_URL: ${{ env.ANTHROPIC_BASE_URL }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
-        INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
-        INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+        INPUT_GIT_USER_NAME: ${{ steps.prepare-auth.outputs.git-user-name }}
+        INPUT_GIT_USER_EMAIL: ${{ steps.prepare-auth.outputs.git-user-email }}
       run: |
         # Determine Docker image: use image-tag with registry if provided, otherwise use docker-image
         if [ -n "${{ inputs.image-tag }}" ]; then
@@ -243,10 +388,10 @@ runs:
           -e AWS_SESSION_TOKEN \
           -e AWS_REGION \
           -e AWS_DEFAULT_REGION \
-          -e GIT_AUTHOR_NAME="${{ inputs.git-user-name }}" \
-          -e GIT_AUTHOR_EMAIL="${{ inputs.git-user-email }}" \
-          -e GIT_COMMITTER_NAME="${{ inputs.git-user-name }}" \
-          -e GIT_COMMITTER_EMAIL="${{ inputs.git-user-email }}" \
+          -e GIT_AUTHOR_NAME="${{ steps.prepare-auth.outputs.git-user-name }}" \
+          -e GIT_AUTHOR_EMAIL="${{ steps.prepare-auth.outputs.git-user-email }}" \
+          -e GIT_COMMITTER_NAME="${{ steps.prepare-auth.outputs.git-user-name }}" \
+          -e GIT_COMMITTER_EMAIL="${{ steps.prepare-auth.outputs.git-user-email }}" \
           -e GITHUB_OUTPUT=/tmp/github_output \
           -e INPUT_MODE \
           -e INPUT_VULNERABLE_PACKAGES="$VULN_PACKAGES" \
