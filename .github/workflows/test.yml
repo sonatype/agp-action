@@ -30,3 +30,10 @@ jobs:
           # Check that action.yml is valid YAML
           python3 -c "import yaml; yaml.safe_load(open('action.yml'))"
           echo "action.yml is valid YAML"
+
+      - name: Shellcheck scripts/*.sh
+        run: |
+          # shellcheck is preinstalled on ubuntu-latest runners; the explicit
+          # version check keeps the step honest if the image ever changes.
+          shellcheck --version
+          shellcheck scripts/*.sh
