@@ -128,13 +128,20 @@ runs:
       if: ${{ inputs.docker-username != '' && inputs.docker-password != '' }}
       shell: bash
       run: |
-        IMAGE="${{ inputs.docker-image }}"
-        # Extract registry from image string (everything before the first /)
-        # e.g. "sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest" -> "sonatype.repo.sonatype.app"
-        REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
-        # If the registry doesn't contain a dot, it's a Docker Hub path (e.g. "sonatype/agp:latest")
-        if [[ "${REGISTRY}" != *.* ]]; then
-          REGISTRY=""
+        # When docker-registry is provided, it IS the registry to auth against
+        if [ -n "${{ inputs.docker-registry }}" ]; then
+          # docker-registry may include a path component (e.g. sonatype.repo.sonatype.app/docker-all)
+          # Docker login only needs the hostname
+          REGISTRY=$(echo "${{ inputs.docker-registry }}" | cut -d'/' -f1)
+        else
+          IMAGE="${{ inputs.docker-image }}"
+          # Extract registry from image string (everything before the first /)
+          # e.g. "ghcr.io/sonatype/agp:latest" -> "ghcr.io"
+          REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
+          # If the registry doesn't contain a dot, it's a Docker Hub path (e.g. "sonatype/agp:latest")
+          if [[ "${REGISTRY}" != *.* ]]; then
+            REGISTRY=""
+          fi
         fi
         echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
 
