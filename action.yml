@@ -232,8 +232,11 @@ runs:
         DOCKER_SOCKET_OPTS=""
         if [ "${{ inputs.mount-docker-socket }}" = "true" ]; then
           if [ -S /var/run/docker.sock ]; then
-            DOCKER_SOCKET_OPTS="-v /var/run/docker.sock:/var/run/docker.sock --group-add $(stat -c '%g' /var/run/docker.sock)"
-            echo "🐳 Docker socket will be mounted into AGP container"
+            DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+            DOCKER_SOCKET_OPTS="-v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID}"
+            DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS -e DOCKER_HOST=unix:///var/run/docker.sock"
+            DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS -e TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock"
+            echo "🐳 Docker socket will be mounted into AGP container (gid=${DOCKER_GID})"
             if [ -f "$HOME/.docker/config.json" ]; then
               DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS -v $HOME/.docker/config.json:/home/agp/.docker/config.json:ro"
               echo "🔑 Docker config forwarded for registry authentication"
