@@ -142,7 +142,15 @@ runs:
       if: ${{ inputs.docker-username != '' && inputs.docker-password != '' }}
       shell: bash
       run: |
-        IMAGE="${{ inputs.docker-image }}"
+        # Determine the actual image using the same precedence as the Run AGP step:
+        # image-tag + docker-registry > docker-registry + :latest > docker-image input
+        if [ -n "${{ inputs.image-tag }}" ]; then
+          IMAGE="${{ inputs.docker-registry }}/sonatype/agp:${{ inputs.image-tag }}"
+        elif [ -n "${{ inputs.docker-registry }}" ]; then
+          IMAGE="${{ inputs.docker-registry }}/sonatype/agp:latest"
+        else
+          IMAGE="${{ inputs.docker-image }}"
+        fi
         # Extract registry from image string (everything before the first /)
         # e.g. "sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest" -> "sonatype.repo.sonatype.app"
         REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
