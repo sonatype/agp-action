@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: write       # Required to push branches
       pull-requests: write  # Required to create PRs
+      id-token: write       # Required to request a scoped token from Sonatype Guide
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +34,30 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Pull requests open as `sonatype-guide[bot]`
+
+By default the action exchanges the GitHub Actions OIDC JWT for a short-lived
+GitHub App installation access token, scoped to the current repository with
+`contents:write` + `pull_requests:write`. PRs and commits are attributed to
+`sonatype-guide[bot]` with the green Verified badge. No PATs or long-lived
+secrets required.
+
+Prerequisites:
+
+1. Install the [Sonatype Guide GitHub App](https://github.com/apps/sonatype-guide) on the target repository.
+2. Declare `permissions: id-token: write` on the job (as shown above).
+
+If you need to opt out (air-gapped runners, GitHub Enterprise Server without
+OIDC federation, or local debugging), pass a token via the `github-token`
+input. PRs in that case will be authored by whoever owns the supplied token:
+
+```yaml
+      - uses: sonatype/agp-action@v1
+        with:
+          create-pr: true
+          github-token: ${{ secrets.MY_PAT }}
 ```
 
 ## Docker Image Registry
@@ -88,8 +112,9 @@ For Sonatype internal users, you can use the private registry for potentially fa
 | `docker-username` | No | | Docker registry username (for private registries only) |
 | `docker-password` | No | | Docker registry password (for private registries only) |
 | `verbose` | No | `false` | Enable verbose output |
-| `git-user-name` | No | `AGP Bot` | Git user name for commits |
-| `git-user-email` | No | `agp-bot@sonatype.com` | Git user email for commits |
+| `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
+| `git-user-name` | No | `sonatype-guide[bot]` when broker is used, otherwise `AGP Bot` | Git user name for commits. |
+| `git-user-email` | No | `<user-id>+sonatype-guide[bot]@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
 
 ## Environment Variables
 
@@ -97,7 +122,7 @@ For Sonatype internal users, you can use the private registry for potentially fa
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | API key for Claude AI (required for AI-powered fixes) |
 | `AGP_API_TOKEN` | Yes | Token for AGP run tracking |
-| `GITHUB_TOKEN` | Yes | GitHub token for PR creation (auto-provided by GitHub) |
+| `GITHUB_TOKEN` | No | Legacy fallback token. Prefer the `github-token` input or OIDC (default). Ignored when the OIDC broker is used. |
 
 ## Repository Setup
 
