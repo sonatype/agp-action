@@ -95,23 +95,15 @@ inputs:
     default: ""
   # Docker image configuration
   docker-image:
-    description: "Full Docker image path (e.g. ghcr.io/sonatype/agp:latest). Ignored if image-tag is provided."
+    description: "Fully-qualified Docker image path including registry and tag (e.g. ghcr.io/sonatype/agp:latest, sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest). If credentials are provided, the registry hostname is extracted from this path for docker login."
     required: false
     default: "ghcr.io/sonatype/agp:latest"
-  image-tag:
-    description: "Docker image tag (e.g. latest, v1.0.0). When provided, constructs full path as {docker-registry}/agp:{image-tag}"
-    required: false
-    default: ""
-  docker-registry:
-    description: "Docker registry URL for authentication (e.g. sonatype.repo.sonatype.app/docker-all)"
-    required: false
-    default: ""
   docker-username:
-    description: "Docker registry username (required only for private registries like sonatype.repo.sonatype.app/docker-all)"
+    description: "Docker registry username. When provided with docker-password, the action logs into the registry extracted from docker-image before pulling."
     required: false
     default: ""
   docker-password:
-    description: "Docker registry password (required only for private registries)"
+    description: "Docker registry password"
     required: false
     default: ""
   skip-docker-pull:
@@ -137,22 +129,18 @@ runs:
   using: "composite"
   steps:
     # Optional: Login to Docker registry if credentials provided
-    - name: Determine Docker registry for login
+    - name: Extract registry from docker-image
       id: extract-registry
       if: ${{ inputs.docker-username != '' && inputs.docker-password != '' }}
       shell: bash
       run: |
-        # Prefer explicit docker-registry input over extracting from docker-image
-        if [ -n "${{ inputs.docker-registry }}" ]; then
-          # docker-registry may include a path (e.g. sonatype.repo.sonatype.app/docker-all)
-          # Extract just the hostname for docker login
-          REGISTRY=$(echo "${{ inputs.docker-registry }}" | cut -d'/' -f1)
-        else
-          IMAGE="${{ inputs.docker-image }}"
-          REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
-          if [[ "${REGISTRY}" != *.* ]]; then
-            REGISTRY=""
-          fi
+        IMAGE="${{ inputs.docker-image }}"
+        # Extract registry hostname (everything before the first /)
+        # e.g. "sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest" -> "sonatype.repo.sonatype.app"
+        REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
+        # If it doesn't contain a dot, it's a Docker Hub path — no explicit registry needed
+        if [[ "${REGISTRY}" != *.* ]]; then
+          REGISTRY=""
         fi
         echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
 
@@ -213,17 +201,7 @@ runs:
         INPUT_GIT_USER_NAME: ${{ steps.prepare-auth.outputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ steps.prepare-auth.outputs.git-user-email }}
       run: |
-        # Determine Docker image: use image-tag with registry if provided, otherwise use docker-image
-        if [ -n "${{ inputs.image-tag }}" ]; then
-          # Image stored as sonatype/agp in Nexus, accessed via docker-all group
-          # Full path: sonatype.repo.sonatype.app/docker-all/sonatype/agp:tag
-          IMAGE="${{ inputs.docker-registry }}/sonatype/agp:${{ inputs.image-tag }}"
-        elif [ -n "${{ inputs.docker-registry }}" ]; then
-          # Use docker-registry with :latest tag when image-tag not provided
-          IMAGE="${{ inputs.docker-registry }}/sonatype/agp:latest"
-        else
-          IMAGE="${{ inputs.docker-image }}"
-        fi
+        IMAGE="${{ inputs.docker-image }}"
         echo "📦 Using AGP Docker image: ${IMAGE}"
         if [ "${{ inputs.skip-docker-pull }}" = "true" ]; then
           echo "ℹ️ Skipping docker pull (skip-docker-pull=true)"
