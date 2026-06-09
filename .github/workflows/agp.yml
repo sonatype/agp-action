@@ -32,6 +32,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -43,5 +44,8 @@ jobs:
           mode: ${{ inputs.mode }}
           vulnerabilities: ${{ inputs.vulnerabilities }}
           create-pr: true
+          docker-image: sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest
+          docker-username: ${{ secrets.RC_USERNAME }}
+          docker-password: ${{ secrets.RC_PASSWORD }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
