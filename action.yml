@@ -137,18 +137,22 @@ runs:
   using: "composite"
   steps:
     # Optional: Login to Docker registry if credentials provided
-    - name: Extract registry from docker-image
+    - name: Determine Docker registry for login
       id: extract-registry
       if: ${{ inputs.docker-username != '' && inputs.docker-password != '' }}
       shell: bash
       run: |
-        IMAGE="${{ inputs.docker-image }}"
-        # Extract registry from image string (everything before the first /)
-        # e.g. "sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest" -> "sonatype.repo.sonatype.app"
-        REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
-        # If the registry doesn't contain a dot, it's a Docker Hub path (e.g. "sonatype/agp:latest")
-        if [[ "${REGISTRY}" != *.* ]]; then
-          REGISTRY=""
+        # Prefer explicit docker-registry input over extracting from docker-image
+        if [ -n "${{ inputs.docker-registry }}" ]; then
+          # docker-registry may include a path (e.g. sonatype.repo.sonatype.app/docker-all)
+          # Extract just the hostname for docker login
+          REGISTRY=$(echo "${{ inputs.docker-registry }}" | cut -d'/' -f1)
+        else
+          IMAGE="${{ inputs.docker-image }}"
+          REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
+          if [[ "${REGISTRY}" != *.* ]]; then
+            REGISTRY=""
+          fi
         fi
         echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
 
