@@ -56,7 +56,7 @@ inputs:
     required: false
     default: ""
   npmrc-content:
-    description: "Base64-encoded .npmrc content (with tokens included)"
+    description: ".npmrc file content for private registry authentication"
     required: false
     default: ""
   maven-settings-xml:
@@ -232,8 +232,11 @@ runs:
         DOCKER_SOCKET_OPTS=""
         if [ "${{ inputs.mount-docker-socket }}" = "true" ]; then
           if [ -S /var/run/docker.sock ]; then
-            DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-            DOCKER_SOCKET_OPTS="-v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID}"
+            DOCKER_GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo "")
+            DOCKER_SOCKET_OPTS="-v /var/run/docker.sock:/var/run/docker.sock"
+            if [ -n "$DOCKER_GID" ]; then
+              DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS --group-add ${DOCKER_GID}"
+            fi
             DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS -e DOCKER_HOST=unix:///var/run/docker.sock"
             DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS -e TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock"
             echo "🐳 Docker socket will be mounted into AGP container (gid=${DOCKER_GID})"

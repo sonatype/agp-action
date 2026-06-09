@@ -82,7 +82,7 @@ For Sonatype internal users, you can use the private registry for potentially fa
 | `dry-run` | No | `false` | Preview changes without applying them |
 | `group` | No | | Apply only a specific group by ID |
 | `validation-commands` | No | | Commands to validate upgrades (newline-separated) |
-| `npmrc-content` | No | | Base64-encoded .npmrc content (with tokens included) |
+| `npmrc-content` | No | | `.npmrc` file content for private registry authentication |
 | `anthropic-base-url` | No | | Custom Anthropic API endpoint |
 | `docker-registry` | No | `ghcr.io` | Docker registry to pull AGP image from |
 | `docker-username` | No | | Docker registry username (for private registries only) |
@@ -308,20 +308,15 @@ For projects using a private npm registry (like Nexus or Artifactory), provide y
    //nexus.company.com/repository/npm-group/:_authToken=YOUR_TOKEN_HERE
    ```
 
-2. Base64 encode it:
-   ```bash
-   base64 -w0 < .npmrc
-   ```
+2. Store the file content as a GitHub secret (`NPM_REGISTRY_AUTH`)
 
-3. Store as a GitHub secret (`NPMRC_BASE64`)
-
-4. Use in your workflow:
+3. Use in your workflow:
    ```yaml
    - name: Run AGP
      uses: sonatype/agp-action@v1
      with:
        create-pr: true
-       npmrc-content: ${{ secrets.NPMRC_BASE64 }}
+       npmrc-content: ${{ secrets.NPM_REGISTRY_AUTH }}
      env:
        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
        AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
@@ -435,7 +430,7 @@ pr:
 **Problem:** npm install fails with 401 or 403 errors
 
 **Solutions:**
-- Verify your `.npmrc` content is correctly base64 encoded
+- Verify your `.npmrc` content is valid (raw file content, not base64-encoded)
 - Ensure the token in your `.npmrc` is valid and not expired
 - Check that the registry URL is correct (with or without trailing slash)
 
