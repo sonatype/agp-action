@@ -56,7 +56,7 @@ inputs:
     required: false
     default: ""
   npmrc-content:
-    description: "Base64-encoded .npmrc content (with tokens included)"
+    description: ".npmrc file content for private registry authentication"
     required: false
     default: ""
   maven-settings-xml:
@@ -108,6 +108,10 @@ inputs:
     default: ""
   skip-docker-pull:
     description: "Skip pulling the Docker image (for local testing with pre-built images)"
+    required: false
+    default: "false"
+  mount-docker-socket:
+    description: "Mount the host Docker socket into the AGP container, enabling Docker commands and container-based tools (e.g., Testcontainers, Docker Compose) during setup and validation"
     required: false
     default: "false"
 
@@ -238,12 +242,45 @@ runs:
           MVN_SETTINGS_ENV="-e MVN_SETTINGS=/home/agp/.m2/settings.xml"
         fi
 
+        # Mount Docker socket if requested (for Testcontainers, Docker Compose, etc.)
+        DOCKER_SOCKET_OPTS=""
+        if [ "${{ inputs.mount-docker-socket }}" = "true" ]; then
+          if [ -S /var/run/docker.sock ]; then
+            DOCKER_GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo "")
+            DOCKER_SOCKET_OPTS="-v /var/run/docker.sock:/var/run/docker.sock"
+            if [ -n "$DOCKER_GID" ]; then
+              DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS --group-add ${DOCKER_GID}"
+            fi
+            DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS -e DOCKER_HOST=unix:///var/run/docker.sock"
+            DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS -e TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock"
+            echo "🐳 Docker socket will be mounted into AGP container (gid=${DOCKER_GID})"
+            if [ -f "$HOME/.docker/config.json" ]; then
+              DOCKER_SOCKET_OPTS="$DOCKER_SOCKET_OPTS -v $HOME/.docker/config.json:/home/agp/.docker/config.json:ro"
+              echo "🔑 Docker config forwarded for registry authentication"
+            fi
+          else
+            echo "⚠️ mount-docker-socket=true but /var/run/docker.sock not found — skipping"
+          fi
+        fi
+
+        # Mount npmrc as file if content provided (same pattern as Maven settings)
+        NPMRC_MOUNT=""
+        if [ -n "$INPUT_NPMRC_CONTENT" ]; then
+          NPMRC_PATH="${RUNNER_TEMP}/npmrc"
+          printf '%s\n' "$INPUT_NPMRC_CONTENT" > "$NPMRC_PATH"
+          chmod 644 "$NPMRC_PATH"
+          NPMRC_MOUNT="-v ${NPMRC_PATH}:/home/agp/.npmrc:ro"
+          echo "📦 npmrc mounted for private registry authentication"
+        fi
+
         # Run AGP container (gh CLI included in image)
         # Note: We add git safe.directory config to handle GitHub Actions checkout
         # shellcheck disable=SC2086
         docker run --rm \
           -v "${{ github.workspace }}:/github/workspace" \
           ${MVN_SETTINGS_MOUNT} \
+          ${DOCKER_SOCKET_OPTS} \
+          ${NPMRC_MOUNT} \
           -w /github/workspace \
           -e GIT_CONFIG_COUNT=1 \
           -e GIT_CONFIG_KEY_0=safe.directory \
