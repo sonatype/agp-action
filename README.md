@@ -60,7 +60,7 @@ For Sonatype internal users, you can use the private registry for potentially fa
 - uses: sonatype/agp-action@v1
   with:
     create-pr: true
-    docker-registry: docker-all.repo.sonatype.com
+    docker-image: sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest
     docker-username: ${{ secrets.DOCKER_USERNAME }}
     docker-password: ${{ secrets.DOCKER_PASSWORD }}
   env:
@@ -84,9 +84,10 @@ For Sonatype internal users, you can use the private registry for potentially fa
 | `validation-commands` | No | | Commands to validate upgrades (newline-separated) |
 | `npmrc-content` | No | | Base64-encoded .npmrc content (with tokens included) |
 | `anthropic-base-url` | No | | Custom Anthropic API endpoint |
-| `docker-registry` | No | `ghcr.io` | Docker registry to pull AGP image from |
+| `docker-image` | No | `ghcr.io/sonatype/agp:latest` | Docker image to pull. For a private registry, set the full path and provide username/password. |
 | `docker-username` | No | | Docker registry username (for private registries only) |
 | `docker-password` | No | | Docker registry password (for private registries only) |
+| `skip-docker-pull` | No | `false` | Skip pulling the image (local testing with a pre-built image) |
 | `verbose` | No | `false` | Enable verbose output |
 | `git-user-name` | No | `AGP Bot` | Git user name for commits |
 | `git-user-email` | No | `agp-bot@sonatype.com` | Git user email for commits |
