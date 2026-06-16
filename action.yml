@@ -115,13 +115,16 @@ runs:
       id: extract-registry
       if: ${{ inputs.docker-username != '' && inputs.docker-password != '' }}
       shell: bash
+      env:
+        INPUT_DOCKER_IMAGE: ${{ inputs.docker-image }}
       run: |
-        IMAGE="${{ inputs.docker-image }}"
+        IMAGE="$INPUT_DOCKER_IMAGE"
         # Extract registry from image string (everything before the first /)
         # e.g. "sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest" -> "sonatype.repo.sonatype.app"
         REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
-        # If the registry doesn't contain a dot, it's a Docker Hub path (e.g. "sonatype/agp:latest")
-        if [[ "${REGISTRY}" != *.* ]]; then
+        # A first segment with no dot and no port (host:port) is a Docker Hub
+        # namespace (e.g. "sonatype/agp"), not a registry host, so blank it.
+        if [[ "${REGISTRY}" != *.* && "${REGISTRY}" != *:* ]]; then
           REGISTRY=""
         fi
         echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
@@ -161,10 +164,12 @@ runs:
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+        INPUT_DOCKER_IMAGE: ${{ inputs.docker-image }}
+        INPUT_SKIP_DOCKER_PULL: ${{ inputs.skip-docker-pull }}
       run: |
-        IMAGE="${{ inputs.docker-image }}"
+        IMAGE="$INPUT_DOCKER_IMAGE"
         echo "📦 Using AGP Docker image: ${IMAGE}"
-        if [ "${{ inputs.skip-docker-pull }}" = "true" ]; then
+        if [ "$INPUT_SKIP_DOCKER_PULL" = "true" ]; then
           echo "ℹ️ Skipping docker pull (skip-docker-pull=true)"
         else
           docker pull "${IMAGE}"
