@@ -230,10 +230,10 @@ runs:
           -e AWS_SESSION_TOKEN \
           -e AWS_REGION \
           -e AWS_DEFAULT_REGION \
-          -e GIT_AUTHOR_NAME="${{ inputs.git-user-name }}" \
-          -e GIT_AUTHOR_EMAIL="${{ inputs.git-user-email }}" \
-          -e GIT_COMMITTER_NAME="${{ inputs.git-user-name }}" \
-          -e GIT_COMMITTER_EMAIL="${{ inputs.git-user-email }}" \
+          -e GIT_AUTHOR_NAME="$INPUT_GIT_USER_NAME" \
+          -e GIT_AUTHOR_EMAIL="$INPUT_GIT_USER_EMAIL" \
+          -e GIT_COMMITTER_NAME="$INPUT_GIT_USER_NAME" \
+          -e GIT_COMMITTER_EMAIL="$INPUT_GIT_USER_EMAIL" \
           -e GITHUB_OUTPUT=/tmp/github_output \
           -e INPUT_MODE \
           -e INPUT_VULNERABLE_PACKAGES="$VULN_PACKAGES" \
