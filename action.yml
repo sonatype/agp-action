@@ -119,13 +119,19 @@ runs:
         INPUT_DOCKER_IMAGE: ${{ inputs.docker-image }}
       run: |
         IMAGE="$INPUT_DOCKER_IMAGE"
-        # Extract registry from image string (everything before the first /)
-        # e.g. "sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest" -> "sonatype.repo.sonatype.app"
-        REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
-        # A first segment with no dot and no port (host:port) is a Docker Hub
-        # namespace (e.g. "sonatype/agp"), not a registry host, so blank it.
-        if [[ "${REGISTRY}" != *.* && "${REGISTRY}" != *:* ]]; then
+        # Derive the registry host to authenticate against, from the image path.
+        if [[ "${IMAGE}" != */* ]]; then
+          # Bare image with no path (e.g. "agp:latest") -> Docker Hub, no host login.
           REGISTRY=""
+        else
+          # Registry is the first path segment, e.g.
+          # "sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest" -> "sonatype.repo.sonatype.app"
+          REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
+          # A first segment with no dot and no port (host:port) is a Docker Hub
+          # namespace (e.g. "sonatype/agp"), not a registry host, so blank it.
+          if [[ "${REGISTRY}" != *.* && "${REGISTRY}" != *:* ]]; then
+            REGISTRY=""
+          fi
         fi
         echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
 
