@@ -9,13 +9,15 @@
 # directive. Pairs with the two-job workflow so a paused (or fail-closed) repository
 # skips the heavy agp job entirely — no runner image pull (GUIDE-2737, BDD-020/040).
 #
-# Auth matches scripts/prepare-auth.sh: it mints a GitHub OIDC token with audience
-# https://guide.sonatype.com and calls the Guide API (AGP_API_URL, default
-# https://api.guide.sonatype.com). Fail-closed: on anything other than HTTP 200 it
-# removes any partial config and FAILS, so a run never proceeds against a stale agp.yml.
+# Auth shares scripts/mint-oidc-token.sh with scripts/prepare-auth.sh: it mints a GitHub
+# OIDC token for the configured audience (default https://guide.sonatype.com) and calls
+# the Guide API (AGP_API_URL, default https://api.guide.sonatype.com). Fail-closed: on
+# anything other than HTTP 200 it removes any partial config and FAILS, so a run never
+# proceeds against a stale agp.yml.
 
 name: "Sonatype Guide Agent P Gate"
 description: "Fetch the governed effective agp.yml over OIDC and emit a run/pause directive (fail-closed)."
+author: "Sonatype"
 
 inputs:
   guide-url:
@@ -41,12 +43,13 @@ runs:
   steps:
     - id: gate
       shell: bash
-      # I11 (CLAUDE.md): never interpolate ${{ inputs.* }} / ${{ github.* }} inside run; pass them
-      # through env and reference $VARS so untrusted values cannot inject shell.
+      # Security: never interpolate ${{ inputs.* }} / ${{ github.* }} directly inside run;
+      # pass them through env and reference $VARS so untrusted values cannot inject shell.
       env:
         GUIDE_URL_INPUT: ${{ inputs.guide-url }}
         OIDC_AUDIENCE: ${{ inputs.audience }}
         CONFIG_PATH: ${{ inputs.config-path }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
 
@@ -55,24 +58,46 @@ runs:
         BASE_URL="${GUIDE_URL_INPUT:-${AGP_API_URL:-https://api.guide.sonatype.com}}"
         BASE_URL="${BASE_URL%/}"
 
+        # The minted OIDC token is sent as a bearer credential to BASE_URL, so refuse to
+        # transmit it over anything but HTTPS (fail-closed). guide-url / AGP_API_URL stay
+        # overridable for testing and GitHub Enterprise, but must be TLS-protected.
+        case "${BASE_URL}" in
+          https://*) : ;;
+          *)
+            echo "::error::agp-gate: refusing to send the OIDC token to a non-HTTPS URL '${BASE_URL}' (fail-closed)."
+            exit 1 ;;
+        esac
+
+        # config-path is written to (and, on failure, removed), so keep it inside the
+        # workspace: reject absolute paths and parent-directory traversal.
+        case "${CONFIG_PATH}" in
+          /*|*..*)
+            echo "::error::agp-gate: config-path must be a relative path within the workspace (got '${CONFIG_PATH}')."
+            exit 1 ;;
+        esac
+
         if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
           echo "::error::agp-gate requires 'permissions: id-token: write' for OIDC. Aborting (fail-closed)."
           exit 1
         fi
 
-        # 1. Mint a GitHub Actions OIDC token for the Guide audience (matches prepare-auth.sh).
-        OIDC_TOKEN="$(curl -fsSL \
-          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}" | jq -r '.value // empty')"
-        if [ -z "${OIDC_TOKEN}" ]; then
-          echo "::error::agp-gate could not obtain a GitHub Actions OIDC token (fail-closed)."
-          echo "Ensure the job declares: permissions: { id-token: write }"
-          exit 1
-        fi
+        # 1. Mint a GitHub Actions OIDC token for the Guide audience. Shared with
+        #    scripts/prepare-auth.sh via scripts/mint-oidc-token.sh so the two stay in sync
+        #    (bounded timeouts + retries live in that helper). The helper exits non-zero with
+        #    a diagnostic if minting fails, which fails the gate closed.
+        OIDC_TOKEN="$(bash "${ACTION_PATH}/../scripts/mint-oidc-token.sh" "${OIDC_AUDIENCE}")"
         echo "::add-mask::${OIDC_TOKEN}"
 
         # 2. Fetch the governed effective config as YAML. Capture status + response headers.
-        HTTP_CODE="$(curl -sS -o "${CONFIG_PATH}" -D headers.txt -w '%{http_code}' \
+        #    Bounded timeouts + retries keep this a fast gate and ride out transient blips;
+        #    a genuine failure still falls through to the fail-closed branch below. No -L:
+        #    the credentialed request must not follow redirects to other hosts. Headers go
+        #    to a RUNNER_TEMP file (never the workspace) and are cleaned up on every exit.
+        HEADERS_FILE="$(mktemp "${RUNNER_TEMP:-/tmp}/agp-gate-headers.XXXXXX")"
+        trap 'rm -f "${HEADERS_FILE}"' EXIT
+        HTTP_CODE="$(curl -sS -o "${CONFIG_PATH}" -D "${HEADERS_FILE}" -w '%{http_code}' \
+          --connect-timeout 5 --max-time 30 \
+          --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
           -H "Authorization: Bearer ${OIDC_TOKEN}" \
           -H "Accept: application/yaml" \
           "${BASE_URL}/agp/effective-config?format=yaml" || echo "000")"
@@ -86,9 +111,14 @@ runs:
           exit 1
         fi
 
-        # 4. Read the run/pause directive from the response header (default run).
-        DIRECTIVE="$(grep -i '^x-agp-directive:' headers.txt | tr -d '\r' | awk '{print $2}' | tail -n1)"
-        DIRECTIVE="${DIRECTIVE:-run}"
-        rm -f headers.txt
+        # 4. Read the run/pause directive from the response header. A missing/empty header is
+        #    the normal "run" case; anything that is not an explicit "paused" is normalised to
+        #    "run" so the output always matches the documented run|paused enum. The trailing
+        #    `|| true` stops grep's no-match exit from aborting the step under `set -o pipefail`.
+        DIRECTIVE_RAW="$(grep -i '^x-agp-directive:' "${HEADERS_FILE}" | tail -n1 | tr -d '\r' | sed -E 's/^[^:]*:[[:space:]]*//' || true)"
+        case "$(printf '%s' "${DIRECTIVE_RAW}" | tr '[:upper:]' '[:lower:]')" in
+          paused) DIRECTIVE="paused" ;;
+          *)      DIRECTIVE="run" ;;
+        esac
         echo "directive=${DIRECTIVE}" >> "${GITHUB_OUTPUT}"
         echo "agp-gate: directive=${DIRECTIVE}; wrote ${CONFIG_PATH} from ${BASE_URL}"

@@ -71,16 +71,11 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
   echo "🔑 Acquiring installation token via Sonatype Guide OIDC broker"
   API_URL="${AGP_API_URL:-https://api.guide.sonatype.com}"
 
-  # Step 1: request an OIDC JWT from the GitHub Actions runtime.
-  OIDC_JWT=$(curl -fsSL \
-    -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-    "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://guide.sonatype.com" \
-    | jq -r '.value // empty')
-  if [ -z "$OIDC_JWT" ]; then
-    echo "::error::Failed to acquire GitHub Actions OIDC token."
-    echo "Ensure the job declares: permissions: { id-token: write }"
-    exit 1
-  fi
+  # Step 1: request an OIDC JWT from the GitHub Actions runtime. The minting logic
+  # (timeouts, retries, error handling) is shared with gate/action.yml via
+  # scripts/mint-oidc-token.sh so the two callers cannot drift apart.
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  OIDC_JWT=$("$SCRIPT_DIR/mint-oidc-token.sh" "https://guide.sonatype.com")
   echo "::add-mask::$OIDC_JWT"
 
   # Step 2: exchange the JWT for a scoped installation token.

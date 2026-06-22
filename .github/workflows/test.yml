@@ -19,10 +19,12 @@ jobs:
 
       - name: Check required files exist
         run: |
-          if [ ! -f "action.yml" ]; then
-            echo "Error: action.yml not found"
-            exit 1
-          fi
+          for f in action.yml gate/action.yml; do
+            if [ ! -f "$f" ]; then
+              echo "Error: $f not found"
+              exit 1
+            fi
+          done
           echo "All required files present"
 
       - name: Validate action.yml
@@ -30,6 +32,12 @@ jobs:
           # Check that action.yml is valid YAML
           python3 -c "import yaml; yaml.safe_load(open('action.yml'))"
           echo "action.yml is valid YAML"
+
+      - name: Validate gate/action.yml
+        run: |
+          # Check that the gate composite action is valid YAML
+          python3 -c "import yaml; yaml.safe_load(open('gate/action.yml'))"
+          echo "gate/action.yml is valid YAML"
 
       - name: Shellcheck scripts/*.sh
         run: |

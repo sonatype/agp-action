@@ -419,6 +419,61 @@ pr:
     - automated
 ```
 
+## Lightweight Gate (skip paused repositories)
+
+The `gate` composite action (`sonatype/agp-action/gate`) is a fast, Docker-free pre-check.
+It fetches the governed effective `agp.yml` from Sonatype Guide over GitHub OIDC, writes it
+to the workspace, and emits a `directive` output of `run` or `paused`. Pairing it with the
+heavy AGP action in a two-job workflow means a paused (or fail-closed) repository never pulls
+the AGP Docker image.
+
+The gate is **fail-closed**: if Guide returns anything other than HTTP 200, it removes any
+partial config and fails the step, so a run never proceeds against a stale `agp.yml`.
+
+### Inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `guide-url` | `$AGP_API_URL`, then `https://api.guide.sonatype.com` | Base URL of the Sonatype Guide API. Must be HTTPS. |
+| `audience` | `https://guide.sonatype.com` | OIDC audience expected by Guide (must match the server's `github.oidc.audience`). |
+| `config-path` | `agp.yml` | Where to write the rendered `agp.yml` in the workspace (must be a relative path inside the workspace). |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `directive` | `run` or `paused` — whether the dependent AGP job should proceed. |
+
+### Two-job workflow example
+
+```yaml
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write        # required for OIDC
+    outputs:
+      directive: ${{ steps.gate.outputs.directive }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        uses: sonatype/agp-action/gate@v1
+
+  agp:
+    needs: gate
+    if: needs.gate.outputs.directive == 'run'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sonatype/agp-action@v1
+        with:
+          create-pr: "true"
+```
+
 ## Troubleshooting
 
 ### Authentication Errors
