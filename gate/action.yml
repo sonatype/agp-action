@@ -1,0 +1,94 @@
+# Copyright (c) 2011-present Sonatype, Inc. All rights reserved.
+# Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
+# "Sonatype" is a trademark of Sonatype, Inc.
+#
+# Sonatype Guide — Agent P Gate (sonatype/agp-action/gate)
+#
+# A lightweight, Docker-free gate that fetches the governed effective agp.yml from
+# Sonatype Guide over GitHub OIDC, writes it to the workspace, and reports a run/pause
+# directive. Pairs with the two-job workflow so a paused (or fail-closed) repository
+# skips the heavy agp job entirely — no runner image pull (GUIDE-2737, BDD-020/040).
+#
+# Auth matches scripts/prepare-auth.sh: it mints a GitHub OIDC token with audience
+# https://guide.sonatype.com and calls the Guide API (AGP_API_URL, default
+# https://api.guide.sonatype.com). Fail-closed: on anything other than HTTP 200 it
+# removes any partial config and FAILS, so a run never proceeds against a stale agp.yml.
+
+name: "Sonatype Guide Agent P Gate"
+description: "Fetch the governed effective agp.yml over OIDC and emit a run/pause directive (fail-closed)."
+
+inputs:
+  guide-url:
+    description: "Base URL of the Sonatype Guide API. Defaults to $AGP_API_URL, then the prod API."
+    required: false
+    default: ""
+  audience:
+    description: "OIDC audience expected by Guide (must match the server's github.oidc.audience)."
+    required: false
+    default: "https://guide.sonatype.com"
+  config-path:
+    description: "Where to write the rendered agp.yml in the workspace."
+    required: false
+    default: "agp.yml"
+
+outputs:
+  directive:
+    description: "run | paused — whether the dependent agp job should proceed."
+    value: ${{ steps.gate.outputs.directive }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: gate
+      shell: bash
+      # I11 (CLAUDE.md): never interpolate ${{ inputs.* }} / ${{ github.* }} inside run; pass them
+      # through env and reference $VARS so untrusted values cannot inject shell.
+      env:
+        GUIDE_URL_INPUT: ${{ inputs.guide-url }}
+        OIDC_AUDIENCE: ${{ inputs.audience }}
+        CONFIG_PATH: ${{ inputs.config-path }}
+      run: |
+        set -euo pipefail
+
+        # Base URL precedence: explicit input > AGP_API_URL env (set by the caller, same as
+        # prepare-auth.sh) > the production Guide API host.
+        BASE_URL="${GUIDE_URL_INPUT:-${AGP_API_URL:-https://api.guide.sonatype.com}}"
+        BASE_URL="${BASE_URL%/}"
+
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+          echo "::error::agp-gate requires 'permissions: id-token: write' for OIDC. Aborting (fail-closed)."
+          exit 1
+        fi
+
+        # 1. Mint a GitHub Actions OIDC token for the Guide audience (matches prepare-auth.sh).
+        OIDC_TOKEN="$(curl -fsSL \
+          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${OIDC_AUDIENCE}" | jq -r '.value // empty')"
+        if [ -z "${OIDC_TOKEN}" ]; then
+          echo "::error::agp-gate could not obtain a GitHub Actions OIDC token (fail-closed)."
+          echo "Ensure the job declares: permissions: { id-token: write }"
+          exit 1
+        fi
+        echo "::add-mask::${OIDC_TOKEN}"
+
+        # 2. Fetch the governed effective config as YAML. Capture status + response headers.
+        HTTP_CODE="$(curl -sS -o "${CONFIG_PATH}" -D headers.txt -w '%{http_code}' \
+          -H "Authorization: Bearer ${OIDC_TOKEN}" \
+          -H "Accept: application/yaml" \
+          "${BASE_URL}/agp/effective-config?format=yaml" || echo "000")"
+
+        # 3. Fail-closed on anything but 200 — and remove any partial body so a stale committed
+        #    agp.yml is never trusted.
+        if [ "${HTTP_CODE}" != "200" ]; then
+          rm -f "${CONFIG_PATH}"
+          echo "::error::agp-gate: Guide returned HTTP ${HTTP_CODE} from ${BASE_URL}/agp/effective-config; skipping run (fail-closed)."
+          echo "Common causes: the Sonatype Guide GitHub App is not installed on this repo; the repo is not onboarded/paused; or 'permissions: id-token: write' is missing."
+          exit 1
+        fi
+
+        # 4. Read the run/pause directive from the response header (default run).
+        DIRECTIVE="$(grep -i '^x-agp-directive:' headers.txt | tr -d '\r' | awk '{print $2}' | tail -n1)"
+        DIRECTIVE="${DIRECTIVE:-run}"
+        rm -f headers.txt
+        echo "directive=${DIRECTIVE}" >> "${GITHUB_OUTPUT}"
+        echo "agp-gate: directive=${DIRECTIVE}; wrote ${CONFIG_PATH} from ${BASE_URL}"
