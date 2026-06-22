@@ -39,6 +39,33 @@ normalize_directive() {
   esac
 }
 
+# validate_base_url <url>
+# The minted OIDC token is sent as a bearer credential to this URL, so refuse to
+# transmit it over anything but HTTPS (fail-closed). guide-url / AGP_API_URL stay
+# overridable for testing and GitHub Enterprise, but must be TLS-protected.
+# Returns 0 if acceptable; otherwise prints an ::error:: and returns 1.
+validate_base_url() {
+  case "${1:-}" in
+    https://*) return 0 ;;
+    *)
+      echo "::error::agp-gate: refusing to send the OIDC token to a non-HTTPS URL '${1:-}' (fail-closed)." >&2
+      return 1 ;;
+  esac
+}
+
+# validate_config_path <path>
+# config-path is written to (and, on failure, removed), so keep it inside the
+# workspace: reject absolute paths and parent-directory traversal.
+# Returns 0 if acceptable; otherwise prints an ::error:: and returns 1.
+validate_config_path() {
+  case "${1:-}" in
+    /*|*..*)
+      echo "::error::agp-gate: config-path must be a relative path within the workspace (got '${1:-}')." >&2
+      return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 main() {
   local script_dir base_url oidc_token headers_file http_code directive_raw directive
 
@@ -49,23 +76,8 @@ main() {
   base_url="${GUIDE_URL_INPUT:-${AGP_API_URL:-https://api.guide.sonatype.com}}"
   base_url="${base_url%/}"
 
-  # The minted OIDC token is sent as a bearer credential to base_url, so refuse to
-  # transmit it over anything but HTTPS (fail-closed). guide-url / AGP_API_URL stay
-  # overridable for testing and GitHub Enterprise, but must be TLS-protected.
-  case "${base_url}" in
-    https://*) : ;;
-    *)
-      echo "::error::agp-gate: refusing to send the OIDC token to a non-HTTPS URL '${base_url}' (fail-closed)."
-      exit 1 ;;
-  esac
-
-  # config-path is written to (and, on failure, removed), so keep it inside the
-  # workspace: reject absolute paths and parent-directory traversal.
-  case "${CONFIG_PATH}" in
-    /*|*..*)
-      echo "::error::agp-gate: config-path must be a relative path within the workspace (got '${CONFIG_PATH}')."
-      exit 1 ;;
-  esac
+  validate_base_url "${base_url}" || exit 1
+  validate_config_path "${CONFIG_PATH}" || exit 1
 
   if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
     echo "::error::agp-gate requires 'permissions: id-token: write' for OIDC. Aborting (fail-closed)."

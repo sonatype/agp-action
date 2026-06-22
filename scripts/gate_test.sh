@@ -45,6 +45,25 @@ check "uppercase RUN normalises to run"   "run"    "$(directive "${tmp}/upper")"
 check "unknown value normalises to run"   "run"    "$(directive "${tmp}/unknown")"
 check "empty input defaults to run"       "run"    "$(normalize_directive "")"
 
+# ok_status <fn> <arg...> — run a validator, swallowing its stderr, print accept/reject.
+ok_status() { local fn="$1"; shift; if "${fn}" "$@" 2>/dev/null; then echo accept; else echo reject; fi; }
+
+# HTTPS-only refusal (fail-closed guard against leaking the OIDC token over plaintext).
+check "https base url accepted"           "accept" "$(ok_status validate_base_url 'https://api.guide.sonatype.com')"
+check "http base url rejected"            "reject" "$(ok_status validate_base_url 'http://api.guide.sonatype.com')"
+check "non-url base rejected"             "reject" "$(ok_status validate_base_url 'ftp://evil.example')"
+check "empty base url rejected"           "reject" "$(ok_status validate_base_url '')"
+
+# config-path traversal / absolute-path rejection.
+check "relative config-path accepted"     "accept" "$(ok_status validate_config_path 'agp.yml')"
+check "nested relative path accepted"     "accept" "$(ok_status validate_config_path 'sub/dir/agp.yml')"
+check "absolute config-path rejected"     "reject" "$(ok_status validate_config_path '/etc/passwd')"
+check "parent-traversal path rejected"    "reject" "$(ok_status validate_config_path '../../escape.yml')"
+
+# NOTE: the fail-closed http_code != 200 branch and the curl 000 fallback in main()
+# depend on a real (or mocked) HTTP round-trip and are intentionally not unit-tested
+# here; they are exercised end-to-end when the action runs against Guide.
+
 if [ "${fail}" -ne 0 ]; then
   echo "gate_test: FAILURES"
   exit 1

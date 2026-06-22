@@ -72,10 +72,11 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
   API_URL="${AGP_API_URL:-https://api.guide.sonatype.com}"
 
   # Step 1: request an OIDC JWT from the GitHub Actions runtime. The minting logic
-  # (timeouts, retries, error handling) is shared with gate/action.yml via
-  # scripts/mint-oidc-token.sh so the two callers cannot drift apart.
+  # (timeouts, retries, error handling) and the default Sonatype Guide audience are
+  # shared with gate/action.yml via scripts/mint-oidc-token.sh so the two callers
+  # cannot drift apart. No audience argument => the helper's DEFAULT_GUIDE_AUDIENCE.
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  OIDC_JWT=$("$SCRIPT_DIR/mint-oidc-token.sh" "https://guide.sonatype.com")
+  OIDC_JWT=$("$SCRIPT_DIR/mint-oidc-token.sh")
   echo "::add-mask::$OIDC_JWT"
 
   # Step 2: exchange the JWT for a scoped installation token.

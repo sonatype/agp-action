@@ -25,6 +25,8 @@ inputs:
     required: false
     default: ""
   audience:
+    # Canonical default mirrors DEFAULT_GUIDE_AUDIENCE in scripts/mint-oidc-token.sh;
+    # keep the two in sync.
     description: "OIDC audience expected by Guide (must match the server's github.oidc.audience)."
     required: false
     default: "https://guide.sonatype.com"
