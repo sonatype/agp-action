@@ -27,17 +27,12 @@ jobs:
           done
           echo "All required files present"
 
-      - name: Validate action.yml
+      - name: Validate action YAML
         run: |
-          # Check that action.yml is valid YAML
-          python3 -c "import yaml; yaml.safe_load(open('action.yml'))"
-          echo "action.yml is valid YAML"
-
-      - name: Validate gate/action.yml
-        run: |
-          # Check that the gate composite action is valid YAML
-          python3 -c "import yaml; yaml.safe_load(open('gate/action.yml'))"
-          echo "gate/action.yml is valid YAML"
+          for f in action.yml gate/action.yml; do
+            python3 -c "import yaml; yaml.safe_load(open('$f'))"
+            echo "$f is valid YAML"
+          done
 
       - name: Shellcheck scripts/*.sh
         run: |
@@ -45,3 +40,7 @@ jobs:
           # version check keeps the step honest if the image ever changes.
           shellcheck --version
           shellcheck scripts/*.sh
+
+      - name: Test gate directive parsing
+        run: |
+          bash scripts/gate_test.sh

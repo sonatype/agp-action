@@ -436,7 +436,7 @@ partial config and fails the step, so a run never proceeds against a stale `agp.
 |-------|---------|-------------|
 | `guide-url` | `$AGP_API_URL`, then `https://api.guide.sonatype.com` | Base URL of the Sonatype Guide API. Must be HTTPS. |
 | `audience` | `https://guide.sonatype.com` | OIDC audience expected by Guide (must match the server's `github.oidc.audience`). |
-| `config-path` | `agp.yml` | Where to write the rendered `agp.yml` in the workspace (must be a relative path inside the workspace). |
+| `config-path` | `agp.yml` | Where to write the rendered `agp.yml` in the workspace (must be a relative path inside the workspace). In the two-job pattern this file is local to the **gate** job's runner — only the `directive` output crosses to the AGP job. It's useful when you run the gate inline in the same job as AGP, or want to upload/inspect the rendered config as an artifact. |
 
 ### Outputs
 
@@ -452,6 +452,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write        # required for OIDC
+      contents: read         # required for actions/checkout on private/internal repos
     outputs:
       directive: ${{ steps.gate.outputs.directive }}
     steps:
@@ -473,6 +474,12 @@ jobs:
         with:
           create-pr: "true"
 ```
+
+> **Note:** a job-level `permissions:` map zeroes every scope you don't list, so the gate
+> job must include `contents: read` for `actions/checkout` to work on private/internal
+> repositories. The `agp.yml` the gate writes stays on the gate runner; the AGP job runs on
+> a fresh runner and re-checks out the repo, so only the `directive` output is shared between
+> the two jobs.
 
 ## Troubleshooting
 

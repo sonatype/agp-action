@@ -36,11 +36,14 @@ fi
 # whole run, and a hung token endpoint must not stall the runner indefinitely. The
 # trailing `|| true` lets the empty-token check below emit a friendly error instead of
 # `set -e` aborting on a curl/jq pipeline failure.
-TOKEN="$(curl -fsSL \
+# `-G --data-urlencode` appends audience as a properly URL-encoded query parameter so
+# reserved characters can't corrupt the request or alter the token's `aud` claim.
+TOKEN="$(curl -fsSL -G \
   --connect-timeout 5 --max-time 30 \
   --retry 3 --retry-delay 2 --retry-connrefused \
   -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -r '.value // empty' || true)"
+  --data-urlencode "audience=${AUDIENCE}" \
+  "${ACTIONS_ID_TOKEN_REQUEST_URL}" | jq -r '.value // empty' || true)"
 
 if [ -z "$TOKEN" ]; then
   echo "::error::Failed to acquire a GitHub Actions OIDC token (id-token: write missing, or the token endpoint errored)." >&2
