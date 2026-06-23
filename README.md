@@ -465,21 +465,25 @@ jobs:
     if: needs.gate.outputs.directive == 'run'
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
-      contents: write
-      pull-requests: write
+      id-token: write        # required for OIDC (gate re-run + AGP token broker)
+      contents: write        # required to push branches
+      pull-requests: write   # required to create PRs
     steps:
       - uses: actions/checkout@v4
+      # Re-run the gate here so the governed agp.yml is materialised into THIS job's
+      # workspace (jobs don't share a workspace), then run the Docker action against it.
+      - uses: sonatype/agp-action/gate@v1
       - uses: sonatype/agp-action@v1
         with:
           create-pr: "true"
 ```
 
-> **Note:** a job-level `permissions:` map zeroes every scope you don't list, so the gate
-> job must include `contents: read` for `actions/checkout` to work on private/internal
-> repositories. The `agp.yml` the gate writes stays on the gate runner; the AGP job runs on
-> a fresh runner and re-checks out the repo, so only the `directive` output is shared between
-> the two jobs.
+> **Note:** a job-level `permissions:` map zeroes every scope you don't list, so each job
+> must list the scopes it needs — e.g. `contents: read` on the gate job for `actions/checkout`
+> on private/internal repositories. Jobs do **not** share a workspace: the `agp.yml` the gate
+> writes is local to the runner it ran on. Only the `directive` output crosses between jobs,
+> so the `agp` job re-runs the gate to fetch the governed `agp.yml` into its own workspace
+> before invoking the Docker action.
 
 ## Troubleshooting
 

@@ -67,7 +67,7 @@ validate_config_path() {
 }
 
 main() {
-  local script_dir base_url oidc_token headers_file http_code directive_raw directive
+  local script_dir base_url oidc_token headers_file http_code body_snippet directive_raw directive
 
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -108,12 +108,18 @@ main() {
     -H "Accept: application/yaml" \
     "${base_url}/agp/effective-config?format=yaml")" || http_code="000"
 
-  # Fail-closed on anything but 200 — and remove any partial body so a stale committed
-  # agp.yml is never trusted.
+  # Fail-closed on anything but 200. Capture a short snippet of the response body for
+  # diagnostics FIRST, then remove any partial body so a stale committed agp.yml is never
+  # trusted. (The OIDC token was already minted above, so a missing id-token: write
+  # permission cannot be the cause here — that is surfaced by the guard above.)
   if [ "${http_code}" != "200" ]; then
+    body_snippet="$(head -c 500 "${CONFIG_PATH}" 2>/dev/null | tr '\n' ' ' || true)"
     rm -f "${CONFIG_PATH}"
     echo "::error::agp-gate: Guide returned HTTP ${http_code} from ${base_url}/agp/effective-config; skipping run (fail-closed)."
-    echo "Common causes: the Sonatype Guide GitHub App is not installed on this repo; the repo is not onboarded/paused; or 'permissions: id-token: write' is missing."
+    if [ -n "${body_snippet}" ]; then
+      echo "Response body (truncated): ${body_snippet}"
+    fi
+    echo "Common causes: the Sonatype Guide GitHub App is not installed on this repo, or the repo is not onboarded/paused."
     exit 1
   fi
 

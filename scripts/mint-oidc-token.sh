@@ -52,7 +52,9 @@ TOKEN="$(curl -fsS -G \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}" | jq -r '.value // empty' || true)"
 
 if [ -z "$TOKEN" ]; then
-  echo "::error::Failed to acquire a GitHub Actions OIDC token (id-token: write missing, or the token endpoint errored)." >&2
+  # The id-token: write permission is already validated above, so the cause here is the
+  # token endpoint itself (HTTP error or an empty/malformed response), not permissions.
+  echo "::error::Failed to acquire a GitHub Actions OIDC token: the token endpoint returned no token (HTTP error or empty response)." >&2
   exit 1
 fi
 
