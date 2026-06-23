@@ -434,8 +434,8 @@ partial config and fails the step, so a run never proceeds against a stale `agp.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `guide-url` | `$AGP_API_URL`, then `https://api.guide.sonatype.com` | Base URL of the Sonatype Guide API. Must be HTTPS. |
-| `audience` | `https://guide.sonatype.com` | OIDC audience expected by Guide (must match the server's `github.oidc.audience`). |
+| `guide-url` | `""` (empty) | Base URL of the Sonatype Guide API. Must be HTTPS. The action manifest declares an empty default; the effective fallback (`$AGP_API_URL`, then `https://api.guide.sonatype.com`) is resolved in `scripts/gate.sh`. |
+| `audience` | `https://guide.sonatype.com` | OIDC audience expected by Sonatype Guide. Leave at the default unless Sonatype Support instructs otherwise. |
 | `config-path` | `agp.yml` | Where to write the rendered `agp.yml` in the workspace (must be a relative path inside the workspace). In the two-job pattern this file is local to the **gate** job's runner — only the `directive` output crosses to the AGP job. It's useful when you run the gate inline in the same job as AGP, or want to upload/inspect the rendered config as an artifact. |
 
 ### Outputs
@@ -472,8 +472,12 @@ jobs:
       - uses: actions/checkout@v4
       # Re-run the gate here so the governed agp.yml is materialised into THIS job's
       # workspace (jobs don't share a workspace), then run the Docker action against it.
-      - uses: sonatype/agp-action/gate@v1
-      - uses: sonatype/agp-action@v1
+      # Re-checking the directive closes the small race where the repo is paused between
+      # the two job starts.
+      - id: gate
+        uses: sonatype/agp-action/gate@v1
+      - if: steps.gate.outputs.directive == 'run'
+        uses: sonatype/agp-action@v1
         with:
           create-pr: "true"
 ```
@@ -484,6 +488,16 @@ jobs:
 > writes is local to the runner it ran on. Only the `directive` output crosses between jobs,
 > so the `agp` job re-runs the gate to fetch the governed `agp.yml` into its own workspace
 > before invoking the Docker action.
+>
+> **Workspace file:** the gate writes the governed config to `config-path` (default `agp.yml`)
+> in the workspace, **overwriting** any committed file of that name and **deleting** it if the
+> fetch fails closed. In the two-job pattern each job runs on a fresh runner so this is
+> harmless; if you run the gate inline after `actions/checkout` in a single job, point
+> `config-path` somewhere that won't clobber a committed `agp.yml` you care about.
+>
+> **Latency:** the gate bounds each Guide/OIDC call at `--max-time 10` with up to 2 retries,
+> so an unreachable Guide fails closed in roughly **35–75s per job** (two calls) rather than
+> hanging. Size each job's `timeout-minutes` accordingly.
 
 ## Troubleshooting
 

@@ -21,13 +21,15 @@ author: "Sonatype"
 
 inputs:
   guide-url:
-    description: "Base URL of the Sonatype Guide API. Defaults to $AGP_API_URL, then the prod API."
+    # Empty by default: the effective default ($AGP_API_URL, then the prod API) is resolved
+    # in scripts/gate.sh, not here, so the YAML manifest declares "" rather than a literal URL.
+    description: "Base URL of the Sonatype Guide API. Leave empty to use $AGP_API_URL, then the production API (resolution happens in scripts/gate.sh)."
     required: false
     default: ""
   audience:
     # Canonical default mirrors DEFAULT_GUIDE_AUDIENCE in scripts/mint-oidc-token.sh;
     # keep the two in sync.
-    description: "OIDC audience expected by Guide (must match the server's github.oidc.audience)."
+    description: "OIDC audience expected by Sonatype Guide. Leave at the default unless Sonatype Support instructs otherwise."
     required: false
     default: "https://guide.sonatype.com"
   config-path:
@@ -55,5 +57,10 @@ runs:
       # The gate logic lives in scripts/gate.sh so it is covered by `shellcheck scripts/*.sh`
       # and unit-tested by scripts/gate_test.sh. Inputs are passed via env (never interpolated
       # into run) so untrusted values cannot inject shell.
+      #
+      # The `../scripts/` traversal is deliberate: the gate is shipped as a subdirectory of
+      # sonatype/agp-action (so the gate and the Docker action version in lockstep — one repo,
+      # one tag), and ${{ github.action_path }} points at gate/, so the shared scripts live one
+      # level up. The gate/ subtree is therefore not independently extractable without scripts/.
       run: |
         bash "${ACTION_PATH}/../scripts/gate.sh"

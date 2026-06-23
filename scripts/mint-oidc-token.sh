@@ -37,25 +37,39 @@ if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUES
 fi
 
 # Bounded timeouts + a small retry/backoff: a transient network blip shouldn't fail the
-# whole run, and a hung token endpoint must not stall the runner indefinitely. The
-# trailing `|| true` lets the empty-token check below emit a friendly error instead of
-# `set -e` aborting on a curl/jq pipeline failure.
+# whole run, and a hung token endpoint must not stall the runner indefinitely. Worst case
+# ≈ 3 attempts × 10s plus backoff (~36s). --retry-all-errors matches gate.sh so a transient
+# 5xx from the token endpoint is retried too.
 # `-G --data-urlencode` appends audience as a properly URL-encoded query parameter so
 # reserved characters can't corrupt the request or alter the token's `aud` claim.
-# No -L: like gate.sh's credentialed fetch, this request carries a bearer credential,
-# so it must not follow redirects to another host.
-TOKEN="$(curl -fsS -G \
-  --connect-timeout 5 --max-time 30 \
-  --retry 3 --retry-delay 2 --retry-connrefused \
+# No -L: like gate.sh's credentialed fetch, this request carries a bearer credential, so it
+# must not follow redirects to another host.
+#
+# We deliberately drop -f and capture the HTTP status (-w) and body separately so a failure
+# can report the real status code + a body snippet (mirroring gate.sh) instead of a generic
+# "no token" message. The fallback is applied OUTSIDE the substitution: only a transport
+# failure makes curl print 000 and exit non-zero.
+RESP_BODY="$(mktemp)"
+trap 'rm -f "${RESP_BODY}"' EXIT
+HTTP_CODE="$(curl -sS -G \
+  --connect-timeout 5 --max-time 10 \
+  --retry 2 --retry-delay 2 --retry-connrefused --retry-all-errors \
+  -o "${RESP_BODY}" -w '%{http_code}' \
   -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
   --data-urlencode "audience=${AUDIENCE}" \
-  "${ACTIONS_ID_TOKEN_REQUEST_URL}" | jq -r '.value // empty' || true)"
+  "${ACTIONS_ID_TOKEN_REQUEST_URL}")" || HTTP_CODE="000"
 
-if [ -z "$TOKEN" ]; then
+TOKEN="$(jq -r '.value // empty' < "${RESP_BODY}" 2>/dev/null || true)"
+
+if [ "${HTTP_CODE}" != "200" ] || [ -z "${TOKEN}" ]; then
   # The id-token: write permission is already validated above, so the cause here is the
   # token endpoint itself (HTTP error or an empty/malformed response), not permissions.
-  echo "::error::Failed to acquire a GitHub Actions OIDC token: the token endpoint returned no token (HTTP error or empty response)." >&2
+  BODY_SNIPPET="$(head -c 300 "${RESP_BODY}" 2>/dev/null | LC_ALL=C tr -d '[:cntrl:]' || true)"
+  echo "::error::Failed to acquire a GitHub Actions OIDC token: token endpoint returned HTTP ${HTTP_CODE}${BODY_SNIPPET:+ (body: ${BODY_SNIPPET})}." >&2
   exit 1
 fi
 
-printf '%s' "$TOKEN"
+# The CALLER masks the token (echo ::add-mask::) because this script's stdout is captured
+# via command substitution; emitting the mask here would either pollute that capture (stdout)
+# or risk leaking the raw token to the log if the runner doesn't parse commands from stderr.
+printf '%s' "${TOKEN}"
