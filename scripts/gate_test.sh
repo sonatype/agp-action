@@ -12,12 +12,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Guard regression check (the guard at the bottom of gate.sh is what stops main from
-# running when we source it). Assert it is present BEFORE sourcing so a removed guard is
-# reported clearly instead of main aborting the test run with a confusing error.
-# shellcheck disable=SC2016  # the ${...} here are a literal grep pattern, not for expansion
-if ! grep -q 'if \[ "${BASH_SOURCE\[0\]}" = "${0}" \]; then' "${SCRIPT_DIR}/gate.sh"; then
-  echo "FAIL - gate.sh is missing the 'run main only when executed directly' guard" >&2
+# Behavioural guard check (the guard at the bottom of gate.sh is what stops main from
+# running when we source it). Sourcing in a child shell must reach the sentinel — if the
+# guard is removed/broken, main runs and aborts under `set -u` before the sentinel prints.
+# This is robust to cosmetic refactors of the guard line (unlike a literal grep).
+if [ "$(bash -c "source '${SCRIPT_DIR}/gate.sh'; echo GUARD_OK" 2>/dev/null)" != "GUARD_OK" ]; then
+  echo "FAIL - sourcing gate.sh ran main() (the 'run only when executed directly' guard is missing/broken)" >&2
   exit 1
 fi
 
@@ -91,9 +91,31 @@ check "leading parent traversal rejected"     "reject" "$(ok_status validate_con
 check "embedded parent traversal rejected"    "reject" "$(ok_status validate_config_path 'foo/../etc/passwd')"
 check "empty config-path rejected"            "reject" "$(ok_status validate_config_path '')"
 
-# NOTE: the fail-closed http_code != 200 branch, the curl 000 fallback, and the realpath
-# workspace-containment check in main() depend on a real (or mocked) HTTP round-trip /
-# filesystem and are intentionally exercised end-to-end when the action runs, not here.
+# --- workspace-containment guard (is_inside_workspace: pure string containment) ---
+check "path inside workspace accepted"        "accept" "$(ok_status is_inside_workspace '/w/repo/agp.yml' '/w/repo')"
+check "workspace root itself accepted"        "accept" "$(ok_status is_inside_workspace '/w/repo' '/w/repo')"
+check "trailing-slash root accepted"          "accept" "$(ok_status is_inside_workspace '/w/repo/x' '/w/repo/')"
+check "sibling-prefix path rejected"          "reject" "$(ok_status is_inside_workspace '/w/repo-evil/x' '/w/repo')"
+check "absolute escape rejected"              "reject" "$(ok_status is_inside_workspace '/etc/passwd' '/w/repo')"
+check "empty workspace root rejected"         "reject" "$(ok_status is_inside_workspace '/w/repo/x' '')"
+check "empty resolved path rejected"          "reject" "$(ok_status is_inside_workspace '' '/w/repo')"
+check "root-of-/ rejected (no match-all)"     "reject" "$(ok_status is_inside_workspace '/etc/passwd' '/')"
+
+# --- log sanitiser defangs control chars and '::' workflow-command markers ---
+check "sanitize strips :: command marker"     "__set-output__" "$(printf '::set-output::' | sanitize_for_log)"
+check "sanitize strips control chars"         "ab"             "$(printf 'a\tb\r' | sanitize_for_log)"
+
+# --- audience default must not drift between the manifest and the mint helper ---
+audience_in_sync() {
+  grep -Fq 'default: "https://guide.sonatype.com"' "${SCRIPT_DIR}/../gate/action.yml" \
+    && grep -Fq 'DEFAULT_GUIDE_AUDIENCE="https://guide.sonatype.com"' "${SCRIPT_DIR}/mint-oidc-token.sh"
+}
+check "audience default in sync"              "insync" "$(if audience_in_sync; then echo insync; else echo drift; fi)"
+
+# NOTE: the fail-closed http_code != 200 branch, the curl 000 fallback, the realpath
+# resolution, and the atomic stage->move in main() depend on a real (or mocked) HTTP
+# round-trip / filesystem and are exercised end-to-end when the action runs, not here.
+# is_inside_workspace (the decision the containment check turns on) is unit-tested above.
 
 if [ "${fail}" -ne 0 ]; then
   echo "gate_test: FAILURES"

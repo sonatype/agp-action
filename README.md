@@ -466,17 +466,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write        # required for OIDC (gate re-run + AGP token broker)
-      contents: write        # required to push branches
-      pull-requests: write   # required to create PRs
+      contents: write        # AGP pushes the upgrade branch
+      pull-requests: write   # AGP opens the upgrade PR
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4   # needed so the Docker action can git push / open the upgrade PR
       # Re-run the gate here so the governed agp.yml is materialised into THIS job's
       # workspace (jobs don't share a workspace), then run the Docker action against it.
       # Re-checking the directive closes the small race where the repo is paused between
-      # the two job starts.
+      # the two job starts. continue-on-error means a transient Guide outage on this second
+      # gate SKIPS the AGP step (via the outcome check) rather than failing the job red.
       - id: gate
         uses: sonatype/agp-action/gate@v1
-      - if: steps.gate.outputs.directive == 'run'
+        continue-on-error: true
+      - if: steps.gate.outcome == 'success' && steps.gate.outputs.directive == 'run'
         uses: sonatype/agp-action@v1
         with:
           create-pr: "true"
@@ -487,7 +489,14 @@ jobs:
 > on private/internal repositories. Jobs do **not** share a workspace: the `agp.yml` the gate
 > writes is local to the runner it ran on. Only the `directive` output crosses between jobs,
 > so the `agp` job re-runs the gate to fetch the governed `agp.yml` into its own workspace
-> before invoking the Docker action.
+> before invoking the Docker action. The `agp` job still needs `actions/checkout` (the Docker
+> action operates on the checked-out tree to push the branch and open the PR) and
+> `contents: write` (to push that branch).
+>
+> **Transient outages:** because the gate is fail-closed, an unreachable Guide makes the gate
+> step exit non-zero. On the second (in-`agp`-job) gate, `continue-on-error: true` plus the
+> `steps.gate.outcome == 'success'` guard turns that into a **skipped** AGP step rather than a
+> red `agp` job, so a brief Guide blip doesn't post a false-positive failure on the PR.
 >
 > **Workspace file:** the gate writes the governed config to `config-path` (default `agp.yml`)
 > in the workspace, **overwriting** any committed file of that name and **deleting** it if the

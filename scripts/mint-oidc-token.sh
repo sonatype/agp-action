@@ -59,13 +59,23 @@ HTTP_CODE="$(curl -sS -G \
   --data-urlencode "audience=${AUDIENCE}" \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}")" || HTTP_CODE="000"
 
-TOKEN="$(jq -r '.value // empty' < "${RESP_BODY}" 2>/dev/null || true)"
-
-if [ "${HTTP_CODE}" != "200" ] || [ -z "${TOKEN}" ]; then
-  # The id-token: write permission is already validated above, so the cause here is the
-  # token endpoint itself (HTTP error or an empty/malformed response), not permissions.
-  BODY_SNIPPET="$(head -c 300 "${RESP_BODY}" 2>/dev/null | LC_ALL=C tr -d '[:cntrl:]' || true)"
+# Non-200: the body is an error envelope (not a credential), so it is safe to log a short,
+# sanitised snippet. id-token: write is already validated above, so the cause is the token
+# endpoint itself. The ':' -> '_' pass defangs any '::' workflow-command injection.
+if [ "${HTTP_CODE}" != "200" ]; then
+  BODY_SNIPPET="$(head -c 300 "${RESP_BODY}" 2>/dev/null | LC_ALL=C tr -d '[:cntrl:]' | tr ':' '_' || true)"
   echo "::error::Failed to acquire a GitHub Actions OIDC token: token endpoint returned HTTP ${HTTP_CODE}${BODY_SNIPPET:+ (body: ${BODY_SNIPPET})}." >&2
+  exit 1
+fi
+
+# HTTP 200: the body legitimately contains the token, so it must NEVER be echoed here.
+# Parse strictly and report only the failure shape, never the body.
+if ! TOKEN="$(jq -r '.value // empty' < "${RESP_BODY}")"; then
+  echo "::error::OIDC token endpoint returned HTTP 200 but the response was not valid JSON." >&2
+  exit 1
+fi
+if [ -z "${TOKEN}" ]; then
+  echo "::error::OIDC token endpoint returned HTTP 200 with no '.value' field." >&2
   exit 1
 fi
 

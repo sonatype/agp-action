@@ -29,10 +29,30 @@ jobs:
 
       - name: Validate action YAML
         run: |
-          for f in action.yml gate/action.yml; do
-            python3 -c "import yaml; yaml.safe_load(open('$f'))"
-            echo "$f is valid YAML"
-          done
+          python3 - <<'PY'
+          import re, sys, yaml
+          ok = True
+          for f in ("action.yml", "gate/action.yml"):
+              m = yaml.safe_load(open(f))
+              if not isinstance(m, dict) or "runs" not in m:
+                  print(f"{f}: missing top-level 'runs'"); ok = False; continue
+              step_ids = {
+                  s["id"]
+                  for s in (m["runs"].get("steps") or [])
+                  if isinstance(s, dict) and s.get("id")
+              }
+              # Every outputs.<id>.value that references steps.<sid>.outputs must point at
+              # a step id that actually exists, so renaming an inner step id can't silently
+              # break consumers of this action.
+              for oid, ospec in (m.get("outputs") or {}).items():
+                  value = str((ospec or {}).get("value", ""))
+                  for sid in re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs", value):
+                      if sid not in step_ids:
+                          print(f"{f}: output '{oid}' references unknown step id '{sid}'")
+                          ok = False
+              print(f"{f} is valid (YAML + output references)")
+          sys.exit(0 if ok else 1)
+          PY
 
       - name: Shellcheck scripts/*.sh
         run: |

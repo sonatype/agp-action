@@ -10,7 +10,9 @@
 #
 # It fetches the governed effective agp.yml from Sonatype Guide over GitHub OIDC,
 # writes it to CONFIG_PATH, and emits a run|paused directive to GITHUB_OUTPUT.
-# Fail-closed: on anything other than HTTP 200 it removes any partial config and fails.
+# Fail-closed: on anything other than HTTP 200 it leaves any committed config untouched
+# and fails. The download is staged in RUNNER_TEMP and only moved into place after a
+# verified 200 + workspace-containment check, so the overwrite is atomic.
 #
 # Inputs (supplied by gate/action.yml):
 #   GUIDE_URL_INPUT   — inputs.guide-url (may be empty)
@@ -22,6 +24,14 @@
 # Override (optional): AGP_API_URL
 
 set -euo pipefail
+
+# sanitize_for_log
+# Filter stdin for safe inclusion in a workflow log line: strip control characters and
+# replace ':' so a hostile or garbled response body cannot inject GitHub Actions workflow
+# commands (which require the '::' marker) into the runner's stdout parser.
+sanitize_for_log() {
+  LC_ALL=C tr -d '[:cntrl:]' | tr ':' '_'
+}
 
 # normalize_directive <header-count> <raw-value>
 # Pure decision: map the parsed x-agp-directive header to the documented run|paused enum.
@@ -108,12 +118,11 @@ validate_base_url() {
 }
 
 # validate_config_path <path>
-# config-path is written to (and, on failure, removed), so keep it inside the workspace.
-# Reject empty values, absolute paths, and any '..' *path segment*. Matching '..' as a
-# bare substring would wrongly reject legitimate names like 'agp..yml', so each
-# '/'-separated segment is compared exactly. Symlink-based escape (an intermediate
-# directory or the leaf being a symlink out of the workspace) is caught separately by the
-# realpath containment check in main() after the file is written.
+# config-path is written to, so keep it inside the workspace. Reject empty values,
+# absolute paths, and any '..' *path segment*. Matching '..' as a bare substring would
+# wrongly reject legitimate names like 'agp..yml', so each '/'-separated segment is
+# compared exactly. Symlink-based escape (an intermediate directory or the leaf being a
+# symlink out of the workspace) is caught separately by is_inside_workspace in main().
 # Returns 0 if acceptable; otherwise prints an ::error:: and returns 1.
 validate_config_path() {
   local path="${1:-}" rest seg
@@ -141,16 +150,39 @@ validate_config_path() {
   return 0
 }
 
+# is_inside_workspace <resolved-path> <resolved-workspace-root>
+# Pure containment check. Fail-closed (return 1) if either argument is empty, or if
+# resolved-path is neither the root itself nor a descendant of root/. Uses an exact path
+# prefix on a slash-normalised root so a sibling like /w/repo-evil does not match /w/repo.
+is_inside_workspace() {
+  local path="${1:-}" root="${2:-}"
+  if [ -z "${path}" ] || [ -z "${root}" ]; then
+    return 1
+  fi
+  root="${root%/}"
+  [ -z "${root}" ] && return 1   # root was "/" only — refuse rather than match everything
+  if [ "${path}" = "${root}" ]; then
+    return 0
+  fi
+  case "${path}" in
+    "${root}"/*) return 0 ;;
+    *)           return 1 ;;
+  esac
+}
+
 main() {
-  local script_dir base_url oidc_token headers_file http_code body_snippet raw_len directive
-  local resolved_config workspace_root
+  local script_dir base_url oidc_token headers_file staging_file http_code body_snippet raw_len directive
+  local workspace_root config_resolved config_dir
 
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
   # Base URL precedence: explicit input > AGP_API_URL env (set by the caller, same as
-  # prepare-auth.sh) > the production Guide API host.
+  # prepare-auth.sh) > the production Guide API host. Strip ALL trailing slashes so a
+  # value like "https://host//" doesn't produce a "//agp/..." request path.
   base_url="${GUIDE_URL_INPUT:-${AGP_API_URL:-https://api.guide.sonatype.com}}"
-  base_url="${base_url%/}"
+  while [ "${base_url}" != "${base_url%/}" ]; do
+    base_url="${base_url%/}"
+  done
 
   validate_base_url "${base_url}" || exit 1
   validate_config_path "${CONFIG_PATH}" || exit 1
@@ -170,62 +202,66 @@ main() {
   # Fetch the governed effective config as YAML. Bounded timeouts + a small retry/backoff
   # keep this a fast gate and ride out transient blips; worst case ≈ 3 attempts × 10s plus
   # backoff (~36s) before failing closed. No -L: the credentialed request must not follow
-  # redirects to other hosts. Headers go to a RUNNER_TEMP file (never the workspace) and
-  # are cleaned up on exit.
-  mkdir -p "$(dirname "${CONFIG_PATH}")"
-  if [ -e "${CONFIG_PATH}" ]; then
-    echo "::warning::agp-gate: overwriting existing ${CONFIG_PATH} with the governed config from Guide (it is removed if the fetch fails)."
-  fi
-
-  # NOTE: this trap replaces any EXIT trap a caller may have installed. gate.sh is only
-  # ever invoked as a top-level script (the action's run: step), never sourced into a shell
-  # that owns its own EXIT trap, so a single unguarded trap is intentional here.
+  # redirects to other hosts.
+  #
+  # The body is staged in RUNNER_TEMP (never written directly to the workspace) so a
+  # committed CONFIG_PATH is only replaced after a verified 200 + containment check — the
+  # overwrite is atomic and a transient failure leaves any committed file intact. The
+  # headers go to a second temp file. Both are cleaned up on exit (this trap replaces any
+  # caller-installed EXIT trap; gate.sh is only ever run as a top-level script — the
+  # source-guard at the bottom prevents main from running when sourced — so that is fine).
+  staging_file="$(mktemp "${RUNNER_TEMP:-/tmp}/agp-gate-config.XXXXXX")"
   headers_file="$(mktemp "${RUNNER_TEMP:-/tmp}/agp-gate-headers.XXXXXX")"
-  trap 'rm -f "${headers_file}"' EXIT
+  trap 'rm -f "${staging_file}" "${headers_file}"' EXIT
 
   # The fallback is applied OUTSIDE the substitution. With -sS (no -f) curl exits zero on
   # HTTP 4xx/5xx and prints the real status via -w; only a transport-level failure (after
   # retries) makes curl print 000 to stdout AND exit non-zero, so `|| http_code="000"`
   # simply matches that, and the `!= "200"` check below fires uniformly for both.
-  http_code="$(curl -sS -o "${CONFIG_PATH}" -D "${headers_file}" -w '%{http_code}' \
+  http_code="$(curl -sS -o "${staging_file}" -D "${headers_file}" -w '%{http_code}' \
     --connect-timeout 5 --max-time 10 \
     --retry 2 --retry-delay 2 --retry-connrefused --retry-all-errors \
     -H "Authorization: Bearer ${oidc_token}" \
     -H "Accept: application/yaml" \
     "${base_url}/agp/effective-config?format=yaml")" || http_code="000"
 
-  # Fail-closed on anything but 200. Capture a short, control-character-stripped snippet of
-  # the response body for diagnostics FIRST, then remove any partial body so a stale
-  # committed agp.yml is never trusted. (The OIDC token was already minted above, so a
-  # missing id-token: write permission cannot be the cause here — that is surfaced earlier.)
+  # Fail-closed on anything but 200. The staged body is an error envelope here (the token
+  # is never echoed), so log a short, sanitised snippet for diagnostics. The committed
+  # CONFIG_PATH is untouched because we staged in RUNNER_TEMP.
   if [ "${http_code}" != "200" ]; then
-    raw_len="$(wc -c < "${CONFIG_PATH}" 2>/dev/null || echo 0)"
-    body_snippet="$(head -c 500 "${CONFIG_PATH}" 2>/dev/null | LC_ALL=C tr -d '[:cntrl:]' || true)"
+    raw_len="$(wc -c < "${staging_file}" 2>/dev/null || echo 0)"
+    body_snippet="$(head -c 500 "${staging_file}" 2>/dev/null | sanitize_for_log || true)"
     if [ "${raw_len:-0}" -gt 500 ]; then
       body_snippet="${body_snippet} [truncated]"
     fi
-    rm -f "${CONFIG_PATH}"
     echo "::error::agp-gate: Guide returned HTTP ${http_code} from ${base_url}/agp/effective-config; skipping run (fail-closed)."
     if [ -n "${body_snippet}" ]; then
       echo "Response body (truncated): ${body_snippet}"
     fi
-    echo "Common causes: the Sonatype Guide GitHub App is not installed on this repo, or the repo is not onboarded/paused."
+    echo "Common causes: the Sonatype Guide GitHub App is not installed on this repo; the repo is not onboarded/paused; or the OIDC 'audience' input does not match the configured Guide audience."
     exit 1
   fi
 
-  # Defence-in-depth against symlink escape: confirm the written file resolved to a path
-  # inside the workspace before we trust/keep it.
+  # Verify the destination stays inside the workspace BEFORE creating directories or moving
+  # the staged file, so a symlinked intermediate directory can't redirect the write outside
+  # $GITHUB_WORKSPACE. realpath -m resolves existing symlink components while treating the
+  # (not-yet-created) leaf logically.
   if [ -n "${GITHUB_WORKSPACE:-}" ]; then
-    resolved_config="$(realpath "${CONFIG_PATH}" 2>/dev/null || true)"
-    workspace_root="$(realpath "${GITHUB_WORKSPACE}" 2>/dev/null || true)"
-    case "${resolved_config}" in
-      "${workspace_root}" | "${workspace_root}"/*) : ;;
-      *)
-        rm -f "${CONFIG_PATH}"
-        echo "::error::agp-gate: ${CONFIG_PATH} resolved outside the workspace (possible symlink escape); refusing (fail-closed)." >&2
-        exit 1 ;;
-    esac
+    workspace_root="$(realpath -m "${GITHUB_WORKSPACE}" 2>/dev/null || true)"
+    config_resolved="$(realpath -m "${CONFIG_PATH}" 2>/dev/null || true)"
+    if ! is_inside_workspace "${config_resolved}" "${workspace_root}"; then
+      echo "::error::agp-gate: config-path '${CONFIG_PATH}' resolves outside the workspace (possible symlink escape); refusing (fail-closed)." >&2
+      exit 1
+    fi
   fi
+
+  # Materialise the governed config atomically into place.
+  config_dir="$(dirname "${CONFIG_PATH}")"
+  mkdir -p "${config_dir}"
+  if [ -e "${CONFIG_PATH}" ]; then
+    echo "agp-gate: replacing existing ${CONFIG_PATH} with the governed config from Guide."
+  fi
+  mv -f "${staging_file}" "${CONFIG_PATH}"
 
   # Read the run/pause directive from the response headers (fail-closed on I/O error).
   directive="$(parse_directive_file "${headers_file}")" || exit 1
