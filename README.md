@@ -427,8 +427,9 @@ to the workspace, and emits a `directive` output of `run` or `paused`. Pairing i
 heavy AGP action in a two-job workflow means a paused (or fail-closed) repository never pulls
 the AGP Docker image.
 
-The gate is **fail-closed**: if Guide returns anything other than HTTP 200, it removes any
-partial config and fails the step, so a run never proceeds against a stale `agp.yml`.
+The gate is **fail-closed**: if Guide returns anything other than HTTP 200, it fails the step
+*without touching any committed `agp.yml`* (the response is staged outside the workspace and
+only moved into place after a verified 200), so a run never proceeds against a stale config.
 
 ### Inputs
 

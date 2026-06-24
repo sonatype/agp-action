@@ -7,7 +7,7 @@
 # A lightweight, Docker-free gate that fetches the governed effective agp.yml from
 # Sonatype Guide over GitHub OIDC, writes it to the workspace, and reports a run/pause
 # directive. Pairs with the two-job workflow so a paused (or fail-closed) repository
-# skips the heavy agp job entirely — no runner image pull (GUIDE-2737, BDD-020/040).
+# skips the heavy agp job entirely — no runner image pull (GUIDE-2737).
 #
 # Auth shares scripts/mint-oidc-token.sh with scripts/prepare-auth.sh: it mints a GitHub
 # OIDC token for the configured audience (default https://guide.sonatype.com) and calls
