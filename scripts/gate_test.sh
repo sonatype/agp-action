@@ -114,6 +114,17 @@ check "root-of-/ rejected (no match-all)"     "reject" "$(ok_status is_inside_wo
 check "sanitize strips :: command marker"     "__set-output__" "$(printf '::set-output::' | sanitize_for_log)"
 check "sanitize strips control chars"         "ab"             "$(printf 'a\tb\r' | sanitize_for_log)"
 
+# --- portability guard: no GNU-only coreutils flags (self-hosted runners may be BSD/macOS) ---
+# `realpath -m` and `mv -T`/`mv -fT` are GNU-only and silently break on macOS, where they
+# return empty / error — exactly the regression that took the gate down on a self-hosted mac.
+no_gnu_only_flags() {
+  # Strip comment lines first so the rule matches real usage, not prose mentioning the flags.
+  ! grep -hv '^[[:space:]]*#' \
+      "${SCRIPT_DIR}/gate.sh" "${SCRIPT_DIR}/mint-oidc-token.sh" "${SCRIPT_DIR}/prepare-auth.sh" \
+    | grep -Eq 'realpath[[:space:]]+-[A-Za-z]*m|mv[[:space:]]+-[A-Za-z]*T'
+}
+check "no GNU-only realpath -m / mv -T"       "portable" "$(if no_gnu_only_flags; then echo portable; else echo gnu-only; fi)"
+
 # --- audience default must not drift between the manifest and the mint helper ---
 # Tolerant of whitespace/quoting reformats so it only fails on a real value change, not a
 # cosmetic edit: both files must carry the canonical audience URL for the audience input/default.

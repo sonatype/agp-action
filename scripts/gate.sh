@@ -194,7 +194,7 @@ is_inside_workspace() {
 
 main() {
   local script_dir base_url oidc_token http_code body_snippet raw_len directive
-  local workspace_root config_resolved config_dir
+  local workspace_root config_resolved config_dir config_dir_real
 
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -269,13 +269,27 @@ main() {
     exit 1
   fi
 
-  # Resolve the destination explicitly against the (resolved) workspace root rather than
-  # the implicit cwd, so the containment guarantee holds regardless of where the script
-  # runs from. realpath -m resolves existing symlink components while treating the
-  # not-yet-created leaf logically, so a symlinked intermediate directory is caught here
-  # BEFORE any directory is created or any byte is written into the workspace.
-  workspace_root="$(realpath -m "${GITHUB_WORKSPACE}" 2>/dev/null || true)"
-  config_resolved="$(realpath -m "${workspace_root}/${CONFIG_PATH}" 2>/dev/null || true)"
+  # Resolve the destination strictly under the workspace, portably. realpath -m is GNU-only
+  # (BSD/macOS self-hosted runners don't have it), so resolve with `cd ... && pwd -P`, which
+  # yields the physical, symlink-resolved absolute path of an existing directory on every
+  # platform. Resolving the workspace and the config directory the same way means a symlink
+  # anywhere in the path is followed consistently, so a real escape is still caught while the
+  # common case works on macOS too. The directory is created first (only on the success path,
+  # after the 200 check above) so it can be resolved; validate_config_path has already
+  # rejected '..' segments and absolute paths.
+  workspace_root="$(cd "${GITHUB_WORKSPACE}" 2>/dev/null && pwd -P || true)"
+  if [ -z "${workspace_root}" ]; then
+    echo "::error::agp-gate: GITHUB_WORKSPACE ('${GITHUB_WORKSPACE}') is not a readable directory (fail-closed)." >&2
+    exit 1
+  fi
+  config_dir="$(dirname "${CONFIG_PATH}")"
+  mkdir -p "${workspace_root}/${config_dir}"
+  config_dir_real="$(cd "${workspace_root}/${config_dir}" 2>/dev/null && pwd -P || true)"
+  if [ -z "${config_dir_real}" ]; then
+    echo "::error::agp-gate: could not resolve the config-path directory under the workspace (fail-closed)." >&2
+    exit 1
+  fi
+  config_resolved="${config_dir_real}/$(basename "${CONFIG_PATH}")"
   if ! is_inside_workspace "${config_resolved}" "${workspace_root}"; then
     echo "::error::agp-gate: config-path '${CONFIG_PATH}' resolves outside the workspace (possible symlink escape); refusing (fail-closed)." >&2
     exit 1
@@ -285,17 +299,16 @@ main() {
     exit 1
   fi
 
-  # Materialise the governed config atomically. Stage inside the destination directory so
-  # the final rename is a same-filesystem rename(2) (RUNNER_TEMP may be a different mount on
-  # self-hosted runners). mv -fT treats the destination as a file, never moving into a dir.
-  config_dir="$(dirname "${config_resolved}")"
-  mkdir -p "${config_dir}"
+  # Materialise the governed config atomically. Stage inside the (resolved) destination
+  # directory so the final rename is a same-filesystem rename(2) — RUNNER_TEMP may be a
+  # different mount on self-hosted runners. The [ -d ] check above already rejects a directory
+  # target, so plain `mv -f` (portable; BSD mv has no -T) is safe.
   if [ -e "${config_resolved}" ]; then
     echo "agp-gate: replacing existing ${CONFIG_PATH} with the governed config from Guide."
   fi
-  _GATE_DEST_TMP="$(mktemp "${config_dir}/.agp-gate-config.XXXXXX")"
+  _GATE_DEST_TMP="$(mktemp "${config_dir_real}/.agp-gate-config.XXXXXX")"
   cp "${_GATE_STAGING_TMP}" "${_GATE_DEST_TMP}"
-  mv -fT "${_GATE_DEST_TMP}" "${config_resolved}"
+  mv -f "${_GATE_DEST_TMP}" "${config_resolved}"
   _GATE_DEST_TMP=""   # consumed by the rename; nothing left for cleanup to remove
 
   # Read the run/pause directive from the response headers (fail-closed on I/O error).
