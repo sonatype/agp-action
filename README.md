@@ -436,7 +436,7 @@ partial config and fails the step, so a run never proceeds against a stale `agp.
 |-------|---------|-------------|
 | `guide-url` | `""` (empty) | Base URL of the Sonatype Guide API. Must be HTTPS. The action manifest declares an empty default; the effective fallback (`$AGP_API_URL`, then `https://api.guide.sonatype.com`) is resolved in `scripts/gate.sh`. |
 | `audience` | `https://guide.sonatype.com` | OIDC audience expected by Sonatype Guide. Leave at the default unless Sonatype Support instructs otherwise. |
-| `config-path` | `agp.yml` | Where to write the rendered `agp.yml` in the workspace (must be a relative path inside the workspace). In the two-job pattern this file is local to the **gate** job's runner — only the `directive` output crosses to the AGP job. It's useful when you run the gate inline in the same job as AGP, or want to upload/inspect the rendered config as an artifact. |
+| `config-path` | `agp.yml` | Where to write the rendered `agp.yml`. Must be a relative path inside the workspace; absolute paths, `..` segments, and paths resolving outside `$GITHUB_WORKSPACE` via symlinks are rejected (fail-closed). In the two-job pattern this file is local to the **gate** job's runner — only the `directive` output crosses to the AGP job. It's useful when you run the gate inline in the same job as AGP, or want to upload/inspect the rendered config as an artifact. |
 
 ### Outputs
 
@@ -455,14 +455,18 @@ jobs:
       contents: read         # required for actions/checkout on private/internal repos
     outputs:
       directive: ${{ steps.gate.outputs.directive }}
+      outcome: ${{ steps.gate.outcome }}
     steps:
       - uses: actions/checkout@v4
+      # continue-on-error keeps a transient Guide outage from failing this job red; the
+      # agp job's if: below treats anything but a successful 'run' as "skip" (fail-closed).
       - id: gate
         uses: sonatype/agp-action/gate@v1
+        continue-on-error: true
 
   agp:
     needs: gate
-    if: needs.gate.outputs.directive == 'run'
+    if: needs.gate.outputs.outcome == 'success' && needs.gate.outputs.directive == 'run'
     runs-on: ubuntu-latest
     permissions:
       id-token: write        # required for OIDC (gate re-run + AGP token broker)
@@ -493,16 +497,20 @@ jobs:
 > action operates on the checked-out tree to push the branch and open the PR) and
 > `contents: write` (to push that branch).
 >
-> **Transient outages:** because the gate is fail-closed, an unreachable Guide makes the gate
-> step exit non-zero. On the second (in-`agp`-job) gate, `continue-on-error: true` plus the
-> `steps.gate.outcome == 'success'` guard turns that into a **skipped** AGP step rather than a
-> red `agp` job, so a brief Guide blip doesn't post a false-positive failure on the PR.
+> **Transient outages (consistent across both gates):** because the gate is fail-closed, an
+> unreachable Guide makes the gate step exit non-zero. **Both** gate invocations use
+> `continue-on-error: true` with an `outcome == 'success'` guard, so a brief Guide blip
+> uniformly **skips** the AGP work rather than posting a red, false-positive failure — the
+> outcome no longer depends on which side of the job boundary the blip lands. Trade-off: a
+> genuine, sustained Guide outage shows up as a *skipped* run, not a failure, so pair this
+> with your own alerting if you need to be paged on prolonged unavailability. (If you'd
+> rather fail loud, drop `continue-on-error` from both gates and the `outcome` guards.)
 >
 > **Workspace file:** the gate writes the governed config to `config-path` (default `agp.yml`)
-> in the workspace, **overwriting** any committed file of that name and **deleting** it if the
-> fetch fails closed. In the two-job pattern each job runs on a fresh runner so this is
-> harmless; if you run the gate inline after `actions/checkout` in a single job, point
-> `config-path` somewhere that won't clobber a committed `agp.yml` you care about.
+> by staging it outside the workspace and moving it into place only after a verified HTTP 200
+> + containment check. A committed file of that name is **replaced atomically on success** and
+> **left intact on a fail-closed outcome** (it is never deleted). In the two-job pattern each
+> job runs on a fresh runner, so this only matters for the inline-single-job pattern.
 >
 > **Latency:** the gate bounds each Guide/OIDC call at `--max-time 10` with up to 2 retries,
 > so an unreachable Guide fails closed in roughly **35–75s per job** (two calls) rather than

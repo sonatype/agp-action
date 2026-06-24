@@ -51,6 +51,10 @@ printf 'HTTP/2 200\r\nX-AGP-Directive: RUN\r\n\r\n'            > "${tmp}/upper"
 printf 'HTTP/2 200\r\nx-agp-directive: maybe\r\n\r\n'          > "${tmp}/unknown"
 printf 'HTTP/2 200\r\nx-agp-directive:\r\n\r\n'                > "${tmp}/empty"
 printf 'HTTP/2 200\r\nx-agp-directive: run\r\nx-agp-directive: paused\r\n\r\n' > "${tmp}/dup"
+# Multi-block: curl -D appends every retry attempt's headers; only the FINAL block counts.
+printf 'HTTP/1.1 503 Service Unavailable\r\nx-agp-directive: paused\r\n\r\nHTTP/2 200\r\nx-agp-directive: run\r\n\r\n' > "${tmp}/retry_run"
+printf 'HTTP/1.1 503 Service Unavailable\r\nx-agp-directive: run\r\n\r\nHTTP/2 200\r\nx-agp-directive: paused\r\n\r\n' > "${tmp}/retry_paused"
+printf 'HTTP/1.1 502 Bad Gateway\r\n\r\nHTTP/2 200\r\nContent-Type: application/yaml\r\n\r\n' > "${tmp}/retry_none"
 
 check "absent header -> run (active default)" "run"    "$(parse_directive_file "${tmp}/none")"
 check "explicit run -> run"                   "run"    "$(parse_directive_file "${tmp}/run")"
@@ -61,6 +65,9 @@ check "uppercase RUN -> run"                  "run"    "$(parse_directive_file "
 check "unknown value -> paused (fail-closed)" "paused" "$(parse_directive_file "${tmp}/unknown")"
 check "empty value -> paused (fail-closed)"   "paused" "$(parse_directive_file "${tmp}/empty")"
 check "duplicate headers -> paused (ambig.)"  "paused" "$(parse_directive_file "${tmp}/dup")"
+check "retry block: final 200 run wins"       "run"    "$(parse_directive_file "${tmp}/retry_run")"
+check "retry block: final 200 paused wins"    "paused" "$(parse_directive_file "${tmp}/retry_paused")"
+check "retry block: final 200 no header -> run" "run"  "$(parse_directive_file "${tmp}/retry_none")"
 
 # parse_directive_file must fail-closed (non-zero) on a missing/unreadable headers file.
 check "missing headers file rejected"         "reject" "$(if parse_directive_file "${tmp}/does-not-exist" >/dev/null 2>&1; then echo accept; else echo reject; fi)"
@@ -80,6 +87,8 @@ check "userinfo host rejected"                "reject" "$(ok_status validate_bas
 check "empty-authority https:// rejected"     "reject" "$(ok_status validate_base_url 'https://')"
 check "triple-slash empty host rejected"      "reject" "$(ok_status validate_base_url 'https:///some/path')"
 check "whitespace in host rejected"           "reject" "$(ok_status validate_base_url 'https:// evil.example')"
+check "ipv6 literal host accepted"            "accept" "$(ok_status validate_base_url 'https://[2606:4700::1111]/agp')"
+check "ipv6 literal with port accepted"       "accept" "$(ok_status validate_base_url 'https://[::1]:8443/x')"
 
 # --- config-path traversal / absolute-path rejection (segment-based) ---
 check "relative config-path accepted"         "accept" "$(ok_status validate_config_path 'agp.yml')"
@@ -106,9 +115,11 @@ check "sanitize strips :: command marker"     "__set-output__" "$(printf '::set-
 check "sanitize strips control chars"         "ab"             "$(printf 'a\tb\r' | sanitize_for_log)"
 
 # --- audience default must not drift between the manifest and the mint helper ---
+# Tolerant of whitespace/quoting reformats so it only fails on a real value change, not a
+# cosmetic edit: both files must carry the canonical audience URL for the audience input/default.
 audience_in_sync() {
-  grep -Fq 'default: "https://guide.sonatype.com"' "${SCRIPT_DIR}/../gate/action.yml" \
-    && grep -Fq 'DEFAULT_GUIDE_AUDIENCE="https://guide.sonatype.com"' "${SCRIPT_DIR}/mint-oidc-token.sh"
+  grep -Eq 'default:[[:space:]]*"?https://guide\.sonatype\.com"?' "${SCRIPT_DIR}/../gate/action.yml" \
+    && grep -Eq 'DEFAULT_GUIDE_AUDIENCE=["'\'']?https://guide\.sonatype\.com["'\'']?' "${SCRIPT_DIR}/mint-oidc-token.sh"
 }
 check "audience default in sync"              "insync" "$(if audience_in_sync; then echo insync; else echo drift; fi)"
 

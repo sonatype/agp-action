@@ -29,7 +29,7 @@ set -euo pipefail
 # callers that don't override it (e.g. scripts/prepare-auth.sh). Keep it in sync with
 # the `audience` input default in gate/action.yml.
 DEFAULT_GUIDE_AUDIENCE="https://guide.sonatype.com"
-AUDIENCE="${1:-$DEFAULT_GUIDE_AUDIENCE}"
+audience="${1:-$DEFAULT_GUIDE_AUDIENCE}"
 
 if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
   echo "::error::OIDC unavailable: the job must declare 'permissions: id-token: write'." >&2
@@ -49,32 +49,35 @@ fi
 # can report the real status code + a body snippet (mirroring gate.sh) instead of a generic
 # "no token" message. The fallback is applied OUTSIDE the substitution: only a transport
 # failure makes curl print 000 and exit non-zero.
-RESP_BODY="$(mktemp)"
-trap 'rm -f "${RESP_BODY}"' EXIT
-HTTP_CODE="$(curl -sS -G \
+# Stage the response (which on HTTP 200 contains the bearer token) under RUNNER_TEMP, the
+# job-scoped temp dir the runner cleans up, rather than a shared /tmp — matching gate.sh and
+# keeping the token out of any temp dir other local processes might read on self-hosted runners.
+resp_body="$(mktemp "${RUNNER_TEMP:-/tmp}/agp-mint-oidc.XXXXXX")"
+trap 'rm -f "${resp_body}"' EXIT
+http_code="$(curl -sS -G \
   --connect-timeout 5 --max-time 10 \
   --retry 2 --retry-delay 2 --retry-connrefused --retry-all-errors \
-  -o "${RESP_BODY}" -w '%{http_code}' \
+  -o "${resp_body}" -w '%{http_code}' \
   -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-  --data-urlencode "audience=${AUDIENCE}" \
-  "${ACTIONS_ID_TOKEN_REQUEST_URL}")" || HTTP_CODE="000"
+  --data-urlencode "audience=${audience}" \
+  "${ACTIONS_ID_TOKEN_REQUEST_URL}")" || http_code="000"
 
 # Non-200: the body is an error envelope (not a credential), so it is safe to log a short,
 # sanitised snippet. id-token: write is already validated above, so the cause is the token
 # endpoint itself. The ':' -> '_' pass defangs any '::' workflow-command injection.
-if [ "${HTTP_CODE}" != "200" ]; then
-  BODY_SNIPPET="$(head -c 300 "${RESP_BODY}" 2>/dev/null | LC_ALL=C tr -d '[:cntrl:]' | tr ':' '_' || true)"
-  echo "::error::Failed to acquire a GitHub Actions OIDC token: token endpoint returned HTTP ${HTTP_CODE}${BODY_SNIPPET:+ (body: ${BODY_SNIPPET})}." >&2
+if [ "${http_code}" != "200" ]; then
+  body_snippet="$(head -c 300 "${resp_body}" 2>/dev/null | LC_ALL=C tr -d '[:cntrl:]' | tr ':' '_' || true)"
+  echo "::error::Failed to acquire a GitHub Actions OIDC token: token endpoint returned HTTP ${http_code}${body_snippet:+ (body: ${body_snippet})}." >&2
   exit 1
 fi
 
 # HTTP 200: the body legitimately contains the token, so it must NEVER be echoed here.
 # Parse strictly and report only the failure shape, never the body.
-if ! TOKEN="$(jq -r '.value // empty' < "${RESP_BODY}")"; then
+if ! token="$(jq -r '.value // empty' < "${resp_body}")"; then
   echo "::error::OIDC token endpoint returned HTTP 200 but the response was not valid JSON." >&2
   exit 1
 fi
-if [ -z "${TOKEN}" ]; then
+if [ -z "${token}" ]; then
   echo "::error::OIDC token endpoint returned HTTP 200 with no '.value' field." >&2
   exit 1
 fi
@@ -82,4 +85,4 @@ fi
 # The CALLER masks the token (echo ::add-mask::) because this script's stdout is captured
 # via command substitution; emitting the mask here would either pollute that capture (stdout)
 # or risk leaking the raw token to the log if the runner doesn't parse commands from stderr.
-printf '%s' "${TOKEN}"
+printf '%s' "${token}"

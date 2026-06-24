@@ -11,9 +11,10 @@
 #
 # Auth shares scripts/mint-oidc-token.sh with scripts/prepare-auth.sh: it mints a GitHub
 # OIDC token for the configured audience (default https://guide.sonatype.com) and calls
-# the Guide API (AGP_API_URL, default https://api.guide.sonatype.com). Fail-closed: on
-# anything other than HTTP 200 it removes any partial config and FAILS, so a run never
-# proceeds against a stale agp.yml.
+# the Guide API (AGP_API_URL, default https://api.guide.sonatype.com). Fail-closed: the
+# download is staged outside the workspace and only moved into place after a verified
+# HTTP 200 + workspace-containment check, so a committed agp.yml is left intact on any
+# failure and replaced atomically on success — a run never proceeds against a stale agp.yml.
 
 name: "Sonatype Guide Agent P Gate"
 description: "Fetch the governed effective agp.yml over OIDC and emit a run/pause directive (fail-closed)."
@@ -33,7 +34,7 @@ inputs:
     required: false
     default: "https://guide.sonatype.com"
   config-path:
-    description: "Where to write the rendered agp.yml in the workspace."
+    description: "Where to write the rendered agp.yml. Must be a relative path inside the workspace; absolute paths, '..' segments, and paths that resolve outside $GITHUB_WORKSPACE via symlinks are rejected (fail-closed)."
     required: false
     default: "agp.yml"
 

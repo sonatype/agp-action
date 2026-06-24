@@ -113,20 +113,17 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
   # minted the token. The numeric user ID is required so GitHub shows the
   # 'Verified · by sonatype-guide[bot]' badge on commits (this is the
   # documented formula from GitHub's actions/create-github-app-token README).
+  #
+  # The bot's numeric user ID is immutable for the app's lifetime, so it is hardcoded
+  # rather than resolved with a live, unauthenticated api.github.com call on every run
+  # (that lookup counts against the 60/hour/IP unauthenticated rate limit shared across
+  # all workflows on a hosted-runner egress IP). Source of truth:
+  #   GET https://api.github.com/users/sonatype-guide[bot] -> .id   (262430933)
   if [ -z "$GIT_NAME" ]; then
     GIT_NAME="sonatype-guide[bot]"
   fi
   if [ -z "$GIT_EMAIL" ]; then
-    BOT_USER_ID=$(curl -fsSL \
-      -H "Accept: application/vnd.github+json" \
-      "https://api.github.com/users/sonatype-guide%5Bbot%5D" \
-      | jq -r '.id // empty')
-    if [ -z "$BOT_USER_ID" ]; then
-      echo "::warning::Could not resolve sonatype-guide[bot] user ID; falling back to app email without numeric prefix. The Verified bot badge will not appear on commits."
-      GIT_EMAIL="sonatype-guide[bot]@users.noreply.github.com"
-    else
-      GIT_EMAIL="${BOT_USER_ID}+sonatype-guide[bot]@users.noreply.github.com"
-    fi
+    GIT_EMAIL="262430933+sonatype-guide[bot]@users.noreply.github.com"
   fi
 
 elif [ -n "${GITHUB_TOKEN:-}" ]; then
