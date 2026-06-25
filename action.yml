@@ -12,9 +12,13 @@ branding:
 
 inputs:
   mode:
-    description: "Run mode: 'full' (all updates) or 'security' (only vulnerable packages)"
+    description: "Run mode: 'full' (all updates), 'security' (only vulnerable packages), or 'heal' (rebuild conflicting PRs)"
     required: false
     default: "full"
+  repo_id:
+    description: "Sonatype Guide repository id (required when mode=heal)"
+    required: false
+    default: ""
   vulnerabilities:
     description: "JSON array of vulnerabilities to fix (for security mode, typically provided by Guide via workflow_dispatch)"
     required: false
@@ -188,6 +192,7 @@ runs:
         AGP_API_URL: ${{ env.AGP_API_URL }}
         GITHUB_TOKEN: ${{ steps.prepare-auth.outputs.token }}
         INPUT_MODE: ${{ inputs.mode }}
+        INPUT_REPO_ID: ${{ inputs.repo_id }}
         INPUT_VULNERABILITIES: ${{ inputs.vulnerabilities }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
         INPUT_NODE_VERSION: ${{ inputs.node-version }}
@@ -307,6 +312,7 @@ runs:
           -e GIT_COMMITTER_EMAIL="${{ steps.prepare-auth.outputs.git-user-email }}" \
           -e GITHUB_OUTPUT=/tmp/github_output \
           -e INPUT_MODE \
+          -e INPUT_REPO_ID \
           -e INPUT_VULNERABLE_PACKAGES="$VULN_PACKAGES" \
           -e INPUT_WORKING_DIRECTORY \
           -e INPUT_NODE_VERSION \
