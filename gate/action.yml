@@ -1,0 +1,67 @@
+# Copyright (c) 2011-present Sonatype, Inc. All rights reserved.
+# Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
+# "Sonatype" is a trademark of Sonatype, Inc.
+#
+# Sonatype Guide — Agent P Gate (sonatype/agp-action/gate)
+#
+# A lightweight, Docker-free gate that fetches the governed effective agp.yml from
+# Sonatype Guide over GitHub OIDC, writes it to the workspace, and reports a run/pause
+# directive. Pairs with the two-job workflow so a paused (or fail-closed) repository
+# skips the heavy agp job entirely — no runner image pull (GUIDE-2737).
+#
+# Auth shares scripts/mint-oidc-token.sh with scripts/prepare-auth.sh: it mints a GitHub
+# OIDC token for the configured audience (default https://guide.sonatype.com) and calls
+# the Guide API (AGP_API_URL, default https://api.guide.sonatype.com). Fail-closed: the
+# download is staged outside the workspace and only moved into place after a verified
+# HTTP 200 + workspace-containment check, so a committed agp.yml is left intact on any
+# failure and replaced atomically on success — a run never proceeds against a stale agp.yml.
+
+name: "Sonatype Guide Agent P Gate"
+description: "Fetch the governed effective agp.yml over OIDC and emit a run/pause directive (fail-closed)."
+author: "Sonatype"
+
+inputs:
+  guide-url:
+    # Empty by default: the effective default ($AGP_API_URL, then the prod API) is resolved
+    # in scripts/gate.sh, not here, so the YAML manifest declares "" rather than a literal URL.
+    description: "Base URL of the Sonatype Guide API. Leave empty to use $AGP_API_URL, then the production API (resolution happens in scripts/gate.sh)."
+    required: false
+    default: ""
+  audience:
+    # Canonical default mirrors DEFAULT_GUIDE_AUDIENCE in scripts/mint-oidc-token.sh;
+    # keep the two in sync.
+    description: "OIDC audience expected by Sonatype Guide. Leave at the default unless Sonatype Support instructs otherwise."
+    required: false
+    default: "https://guide.sonatype.com"
+  config-path:
+    description: "Where to write the rendered agp.yml. Must be a relative path inside the workspace; absolute paths, '..' segments, and paths that resolve outside $GITHUB_WORKSPACE via symlinks are rejected (fail-closed)."
+    required: false
+    default: "agp.yml"
+
+outputs:
+  directive:
+    description: "run | paused — whether the dependent agp job should proceed."
+    value: ${{ steps.gate.outputs.directive }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: gate
+      shell: bash
+      # Security: never interpolate ${{ inputs.* }} / ${{ github.* }} directly inside run;
+      # pass them through env and reference $VARS so untrusted values cannot inject shell.
+      env:
+        GUIDE_URL_INPUT: ${{ inputs.guide-url }}
+        OIDC_AUDIENCE: ${{ inputs.audience }}
+        CONFIG_PATH: ${{ inputs.config-path }}
+        ACTION_PATH: ${{ github.action_path }}
+      # The gate logic lives in scripts/gate.sh so it is covered by `shellcheck scripts/*.sh`
+      # and unit-tested by scripts/gate_test.sh. Inputs are passed via env (never interpolated
+      # into run) so untrusted values cannot inject shell.
+      #
+      # The `../scripts/` traversal is deliberate: the gate is shipped as a subdirectory of
+      # sonatype/agp-action (so the gate and the Docker action version in lockstep — one repo,
+      # one tag), and ${{ github.action_path }} points at gate/, so the shared scripts live one
+      # level up. The gate/ subtree is therefore not independently extractable without scripts/.
+      run: |
+        bash "${ACTION_PATH}/../scripts/gate.sh"

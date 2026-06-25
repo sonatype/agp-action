@@ -419,6 +419,104 @@ pr:
     - automated
 ```
 
+## Lightweight Gate (skip paused repositories)
+
+The `gate` composite action (`sonatype/agp-action/gate`) is a fast, Docker-free pre-check.
+It fetches the governed effective `agp.yml` from Sonatype Guide over GitHub OIDC, writes it
+to the workspace, and emits a `directive` output of `run` or `paused`. Pairing it with the
+heavy AGP action in a two-job workflow means a paused (or fail-closed) repository never pulls
+the AGP Docker image.
+
+The gate is **fail-closed**: if Guide returns anything other than HTTP 200, it fails the step
+*without touching any committed `agp.yml`* (the response is staged outside the workspace and
+only moved into place after a verified 200), so a run never proceeds against a stale config.
+
+### Inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `guide-url` | `""` (empty) | Base URL of the Sonatype Guide API. Must be HTTPS. The action manifest declares an empty default; the effective fallback (`$AGP_API_URL`, then `https://api.guide.sonatype.com`) is resolved in `scripts/gate.sh`. |
+| `audience` | `https://guide.sonatype.com` | OIDC audience expected by Sonatype Guide. Leave at the default unless Sonatype Support instructs otherwise. |
+| `config-path` | `agp.yml` | Where to write the rendered `agp.yml`. Must be a relative path inside the workspace; absolute paths, `..` segments, and paths resolving outside `$GITHUB_WORKSPACE` via symlinks are rejected (fail-closed). In the two-job pattern this file is local to the **gate** job's runner — only the `directive` output crosses to the AGP job. It's useful when you run the gate inline in the same job as AGP, or want to upload/inspect the rendered config as an artifact. |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `directive` | `run` or `paused` — whether the dependent AGP job should proceed. |
+
+### Two-job workflow example
+
+```yaml
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write        # required for OIDC
+      contents: read         # required for actions/checkout on private/internal repos
+    outputs:
+      directive: ${{ steps.gate.outputs.directive }}
+      outcome: ${{ steps.gate.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+      # continue-on-error keeps a transient Guide outage from failing this job red; the
+      # agp job's if: below treats anything but a successful 'run' as "skip" (fail-closed).
+      - id: gate
+        uses: sonatype/agp-action/gate@v1
+        continue-on-error: true
+
+  agp:
+    needs: gate
+    if: needs.gate.outputs.outcome == 'success' && needs.gate.outputs.directive == 'run'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write        # required for OIDC (gate re-run + AGP token broker)
+      contents: write        # AGP pushes the upgrade branch
+      pull-requests: write   # AGP opens the upgrade PR
+    steps:
+      - uses: actions/checkout@v4   # needed so the Docker action can git push / open the upgrade PR
+      # Re-run the gate here so the governed agp.yml is materialised into THIS job's
+      # workspace (jobs don't share a workspace), then run the Docker action against it.
+      # Re-checking the directive closes the small race where the repo is paused between
+      # the two job starts. continue-on-error means a transient Guide outage on this second
+      # gate SKIPS the AGP step (via the outcome check) rather than failing the job red.
+      - id: gate
+        uses: sonatype/agp-action/gate@v1
+        continue-on-error: true
+      - if: steps.gate.outcome == 'success' && steps.gate.outputs.directive == 'run'
+        uses: sonatype/agp-action@v1
+        with:
+          create-pr: "true"
+```
+
+> **Note:** a job-level `permissions:` map zeroes every scope you don't list, so each job
+> must list the scopes it needs — e.g. `contents: read` on the gate job for `actions/checkout`
+> on private/internal repositories. Jobs do **not** share a workspace: the `agp.yml` the gate
+> writes is local to the runner it ran on. Only the `directive` output crosses between jobs,
+> so the `agp` job re-runs the gate to fetch the governed `agp.yml` into its own workspace
+> before invoking the Docker action. The `agp` job still needs `actions/checkout` (the Docker
+> action operates on the checked-out tree to push the branch and open the PR) and
+> `contents: write` (to push that branch).
+>
+> **Transient outages (consistent across both gates):** because the gate is fail-closed, an
+> unreachable Guide makes the gate step exit non-zero. **Both** gate invocations use
+> `continue-on-error: true` with an `outcome == 'success'` guard, so a brief Guide blip
+> uniformly **skips** the AGP work rather than posting a red, false-positive failure — the
+> outcome no longer depends on which side of the job boundary the blip lands. Trade-off: a
+> genuine, sustained Guide outage shows up as a *skipped* run, not a failure, so pair this
+> with your own alerting if you need to be paged on prolonged unavailability. (If you'd
+> rather fail loud, drop `continue-on-error` from both gates and the `outcome` guards.)
+>
+> **Workspace file:** the gate writes the governed config to `config-path` (default `agp.yml`)
+> by staging it outside the workspace and moving it into place only after a verified HTTP 200
+> + containment check. A committed file of that name is **replaced atomically on success** and
+> **left intact on a fail-closed outcome** (it is never deleted). In the two-job pattern each
+> job runs on a fresh runner, so this only matters for the inline-single-job pattern.
+>
+> **Latency:** the gate bounds each Guide/OIDC call at `--max-time 10` with up to 2 retries,
+> so an unreachable Guide fails closed in roughly **35–75s per job** (two calls) rather than
+> hanging. Size each job's `timeout-minutes` accordingly.
+
 ## Troubleshooting
 
 ### Authentication Errors

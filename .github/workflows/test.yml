@@ -19,17 +19,40 @@ jobs:
 
       - name: Check required files exist
         run: |
-          if [ ! -f "action.yml" ]; then
-            echo "Error: action.yml not found"
-            exit 1
-          fi
+          for f in action.yml gate/action.yml; do
+            if [ ! -f "$f" ]; then
+              echo "Error: $f not found"
+              exit 1
+            fi
+          done
           echo "All required files present"
 
-      - name: Validate action.yml
+      - name: Validate action YAML
         run: |
-          # Check that action.yml is valid YAML
-          python3 -c "import yaml; yaml.safe_load(open('action.yml'))"
-          echo "action.yml is valid YAML"
+          python3 - <<'PY'
+          import re, sys, yaml
+          ok = True
+          for f in ("action.yml", "gate/action.yml"):
+              m = yaml.safe_load(open(f))
+              if not isinstance(m, dict) or "runs" not in m:
+                  print(f"{f}: missing top-level 'runs'"); ok = False; continue
+              step_ids = {
+                  s["id"]
+                  for s in (m["runs"].get("steps") or [])
+                  if isinstance(s, dict) and s.get("id")
+              }
+              # Every outputs.<id>.value that references steps.<sid>.outputs must point at
+              # a step id that actually exists, so renaming an inner step id can't silently
+              # break consumers of this action.
+              for oid, ospec in (m.get("outputs") or {}).items():
+                  value = str((ospec or {}).get("value", ""))
+                  for sid in re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs", value):
+                      if sid not in step_ids:
+                          print(f"{f}: output '{oid}' references unknown step id '{sid}'")
+                          ok = False
+              print(f"{f} is valid (YAML + output references)")
+          sys.exit(0 if ok else 1)
+          PY
 
       - name: Shellcheck scripts/*.sh
         run: |
@@ -37,3 +60,7 @@ jobs:
           # version check keeps the step honest if the image ever changes.
           shellcheck --version
           shellcheck scripts/*.sh
+
+      - name: Test gate directive parsing
+        run: |
+          bash scripts/gate_test.sh
