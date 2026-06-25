@@ -277,14 +277,14 @@ main() {
   # common case works on macOS too. The directory is created first (only on the success path,
   # after the 200 check above) so it can be resolved; validate_config_path has already
   # rejected '..' segments and absolute paths.
-  workspace_root="$(cd "${GITHUB_WORKSPACE}" 2>/dev/null && pwd -P || true)"
+  workspace_root="$(cd "${GITHUB_WORKSPACE}" 2>/dev/null && pwd -P)" || workspace_root=""
   if [ -z "${workspace_root}" ]; then
     echo "::error::agp-gate: GITHUB_WORKSPACE ('${GITHUB_WORKSPACE}') is not a readable directory (fail-closed)." >&2
     exit 1
   fi
   config_dir="$(dirname "${CONFIG_PATH}")"
   mkdir -p "${workspace_root}/${config_dir}"
-  config_dir_real="$(cd "${workspace_root}/${config_dir}" 2>/dev/null && pwd -P || true)"
+  config_dir_real="$(cd "${workspace_root}/${config_dir}" 2>/dev/null && pwd -P)" || config_dir_real=""
   if [ -z "${config_dir_real}" ]; then
     echo "::error::agp-gate: could not resolve the config-path directory under the workspace (fail-closed)." >&2
     exit 1
