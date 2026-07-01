@@ -99,17 +99,9 @@ inputs:
     default: ""
   # Docker image configuration
   docker-image:
-    description: "Fully-qualified Docker image path including registry and tag (e.g. ghcr.io/sonatype/agp:latest, sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest). If credentials are provided, the registry hostname is extracted from this path for docker login."
+    description: "Fully-qualified Docker image path including registry and tag. Defaults to the public Docker Hub image sonatype/agp:latest (no authentication required)."
     required: false
-    default: "ghcr.io/sonatype/agp:latest"
-  docker-username:
-    description: "Docker registry username. When provided with docker-password, the action logs into the registry extracted from docker-image before pulling."
-    required: false
-    default: ""
-  docker-password:
-    description: "Docker registry password"
-    required: false
-    default: ""
+    default: "sonatype/agp:latest"
   skip-docker-pull:
     description: "Skip pulling the Docker image (for local testing with pre-built images)"
     required: false
@@ -136,30 +128,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    # Optional: Login to Docker registry if credentials provided
-    - name: Extract registry from docker-image
-      id: extract-registry
-      if: ${{ inputs.docker-username != '' && inputs.docker-password != '' }}
-      shell: bash
-      run: |
-        IMAGE="${{ inputs.docker-image }}"
-        # Extract registry hostname (everything before the first /)
-        # e.g. "sonatype.repo.sonatype.app/docker-all/sonatype/agp:latest" -> "sonatype.repo.sonatype.app"
-        REGISTRY=$(echo "${IMAGE}" | cut -d'/' -f1)
-        # If it doesn't contain a dot, it's a Docker Hub path — no explicit registry needed
-        if [[ "${REGISTRY}" != *.* ]]; then
-          REGISTRY=""
-        fi
-        echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
-
-    - name: Login to Docker Registry
-      if: ${{ inputs.docker-username != '' && inputs.docker-password != '' }}
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ steps.extract-registry.outputs.registry }}
-        username: ${{ inputs.docker-username }}
-        password: ${{ inputs.docker-password }}
-
     # Acquire the token and commit identity used for git push and PR creation.
     #
     # Default path: exchange the GitHub Actions OIDC JWT for a short-lived

@@ -64,9 +64,9 @@ input. PRs in that case will be authored by whoever owns the supplied token:
 
 This action uses a **pre-built Docker image** instead of building from Dockerfile on every run. This significantly improves performance.
 
-### Default: Public Registry (GitHub Container Registry)
+### Default: Public Docker Hub Image
 
-By default, the action pulls from `ghcr.io/sonatype/agp:latest` (public, no authentication required):
+By default, the action pulls from `sonatype/agp:latest` on Docker Hub (public, no authentication required):
 
 ```yaml
 - uses: sonatype/agp-action@v1
@@ -76,17 +76,15 @@ By default, the action pulls from `ghcr.io/sonatype/agp:latest` (public, no auth
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-### Option: Private Sonatype Registry (Internal Use)
+### Option: Custom Image
 
-For Sonatype internal users, you can use the private registry for potentially faster pulls:
+To pull a different image (e.g. a pinned tag or a mirror), override `docker-image`:
 
 ```yaml
 - uses: sonatype/agp-action@v1
   with:
     create-pr: true
-    docker-registry: docker-all.repo.sonatype.com
-    docker-username: ${{ secrets.DOCKER_USERNAME }}
-    docker-password: ${{ secrets.DOCKER_PASSWORD }}
+    docker-image: sonatype/agp:1.2.3
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -108,9 +106,8 @@ For Sonatype internal users, you can use the private registry for potentially fa
 | `validation-commands` | No | | Commands to validate upgrades (newline-separated) |
 | `npmrc-content` | No | | `.npmrc` file content for private registry authentication |
 | `anthropic-base-url` | No | | Custom Anthropic API endpoint |
-| `docker-registry` | No | `ghcr.io` | Docker registry to pull AGP image from |
-| `docker-username` | No | | Docker registry username (for private registries only) |
-| `docker-password` | No | | Docker registry password (for private registries only) |
+| `docker-image` | No | `sonatype/agp:latest` | Fully-qualified Docker image path (registry + tag) to pull the AGP image from |
+| `skip-docker-pull` | No | `false` | Skip pulling the Docker image (for local testing with pre-built images) |
 | `verbose` | No | `false` | Enable verbose output |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
 | `git-user-name` | No | `sonatype-guide[bot]` when broker is used, otherwise `AGP Bot` | Git user name for commits. |
