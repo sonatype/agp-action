@@ -64,6 +64,10 @@ input. PRs in that case will be authored by whoever owns the supplied token:
 
 This action uses a **pre-built Docker image** instead of building from Dockerfile on every run. This significantly improves performance.
 
+> [!IMPORTANT]
+> **Only the official public image `sonatype/agp:latest` on Docker Hub is officially supported.**
+> The `docker-image`, `docker-username`, and `docker-password` inputs let you override the source (e.g. a pinned tag, an internal mirror, or a private registry), but Sonatype does **not** officially support custom, mirrored, or private registries. Use them at your own risk.
+
 ### Default: Public Docker Hub Image
 
 By default, the action pulls from `sonatype/agp:latest` on Docker Hub (public, no authentication required):
@@ -76,7 +80,7 @@ By default, the action pulls from `sonatype/agp:latest` on Docker Hub (public, n
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-### Option: Custom Image
+### Option: Custom Image (not officially supported)
 
 To pull a different image (e.g. a pinned tag or a mirror), override `docker-image`:
 
@@ -89,7 +93,7 @@ To pull a different image (e.g. a pinned tag or a mirror), override `docker-imag
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-### Option: Private Registry
+### Option: Private Registry (not officially supported)
 
 To pull from a private registry, override `docker-image` and supply credentials. The action extracts the registry hostname from `docker-image` and logs in before pulling:
 
