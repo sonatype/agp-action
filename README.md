@@ -89,6 +89,21 @@ To pull a different image (e.g. a pinned tag or a mirror), override `docker-imag
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
+### Option: Private Registry
+
+To pull from a private registry, override `docker-image` and supply credentials. The action extracts the registry hostname from `docker-image` and logs in before pulling:
+
+```yaml
+- uses: sonatype/agp-action@v1
+  with:
+    create-pr: true
+    docker-image: docker-all.repo.sonatype.com/sonatype/agp:latest
+    docker-username: ${{ secrets.DOCKER_USERNAME }}
+    docker-password: ${{ secrets.DOCKER_PASSWORD }}
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -107,6 +122,8 @@ To pull a different image (e.g. a pinned tag or a mirror), override `docker-imag
 | `npmrc-content` | No | | `.npmrc` file content for private registry authentication |
 | `anthropic-base-url` | No | | Custom Anthropic API endpoint |
 | `docker-image` | No | `sonatype/agp:latest` | Fully-qualified Docker image path (registry + tag) to pull the AGP image from |
+| `docker-username` | No | | Docker registry username (for private registries only; used with `docker-password`) |
+| `docker-password` | No | | Docker registry password (for private registries only; used with `docker-username`) |
 | `skip-docker-pull` | No | `false` | Skip pulling the Docker image (for local testing with pre-built images) |
 | `verbose` | No | `false` | Enable verbose output |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
