@@ -64,3 +64,7 @@ jobs:
       - name: Test gate directive parsing
         run: |
           bash scripts/gate_test.sh
+
+      - name: Test prepare-auth classified-error parsing
+        run: |
+          bash scripts/prepare-auth_test.sh
