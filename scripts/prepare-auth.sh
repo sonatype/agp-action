@@ -90,7 +90,20 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
     "${API_URL}/agp/installation-token")
   if [ "$RESP_STATUS" != "200" ]; then
     echo "::error::Sonatype Guide token broker returned HTTP $RESP_STATUS"
-    echo "Response: $(cat "$RESP_BODY")"
+    # Broker classifies upstream GitHub failures as HTTP 502 with a JSON body of the form
+    # { "success": false, "code": "...", "message": "...", "upstreamStatus": 403 }.
+    # Surface the classified message as a second ::error:: annotation so it lands in the Actions
+    # UI error summary (not just the raw step log). Falls back to the raw body when the response
+    # is not the classified JSON shape (older brokers, network-level errors, non-JSON error pages
+    # from an intermediate proxy). Each field is extracted independently so a body with only
+    # `.message` (no `.upstreamStatus`) does not fall back to the message text for the status.
+    CLASSIFIED_MSG=$(jq -r '.message // empty' "$RESP_BODY" 2>/dev/null || true)
+    UPSTREAM_STATUS=$(jq -r '.upstreamStatus // empty' "$RESP_BODY" 2>/dev/null || true)
+    if [ -n "$CLASSIFIED_MSG" ]; then
+      echo "::error::${CLASSIFIED_MSG}${UPSTREAM_STATUS:+ (GitHub upstream status: ${UPSTREAM_STATUS})}"
+    else
+      echo "Response: $(cat "$RESP_BODY")"
+    fi
     echo ""
     echo "Common causes:"
     echo "  - The Sonatype Guide GitHub App is not installed on this repository."
