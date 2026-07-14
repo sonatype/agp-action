@@ -129,10 +129,19 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `docker-username` | No | | Docker registry username (for private registries only; used with `docker-password`) |
 | `docker-password` | No | | Docker registry password (for private registries only; used with `docker-username`) |
 | `skip-docker-pull` | No | `false` | Skip pulling the Docker image (for local testing with pre-built images) |
+| `mount-docker-socket` | No | `false` | Bind-mount the host Docker socket into the AGP container to enable container-based tools (Testcontainers, Docker Compose) during setup and validation. **Container-escape risk — see [Security](#security).** |
 | `verbose` | No | `false` | Enable verbose output |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
 | `git-user-name` | No | `sonatype-guide[bot]` when broker is used, otherwise `AGP Bot` | Git user name for commits. |
 | `git-user-email` | No | `<user-id>+sonatype-guide[bot]@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
+
+## Security
+
+The `mount-docker-socket` input (default `false`) bind-mounts the host's `/var/run/docker.sock` into the AGP container so container-based tools such as Testcontainers or Docker Compose can run during setup and validation.
+
+> **Enabling this input gives any code executed inside the AGP container full access to the host Docker daemon.** AGP runs commands from the target repository — build scripts, dependency install hooks (`postinstall`, `preinstall`), and AI-driven fix attempts — all as the `agp` user, which is exactly the user with socket access. A malicious `postinstall`, a compromised transitive dependency, or a prompt-injected command can therefore issue Docker commands to the host: mounting host paths, launching privileged containers, or exfiltrating runner data. Effectively, mounting the socket is a container-escape surface.
+
+Only set `mount-docker-socket: true` when Docker-in-Docker is genuinely required by your validation steps, and only on workloads you trust.
 
 ## Environment Variables
 
