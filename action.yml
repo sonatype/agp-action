@@ -68,7 +68,7 @@ inputs:
     required: false
     default: ""
   verbose:
-    description: "Enable verbose output"
+    description: "Enable verbose output (may expose sensitive data in logs)"
     required: false
     default: "false"
   # --------------------------------------------------------------------------
