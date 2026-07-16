@@ -130,7 +130,7 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `docker-password` | No | | Docker registry password (for private registries only; used with `docker-username`) |
 | `skip-docker-pull` | No | `false` | Skip pulling the Docker image (for local testing with pre-built images) |
 | `mount-docker-socket` | No | `false` | Bind-mount the host Docker socket into the AGP container to enable container-based tools (Testcontainers, Docker Compose) during setup and validation. **Container-escape risk — see [Security](#security).** |
-| `verbose` | No | `false` | Enable verbose output |
+| `verbose` | No | `false` | Enable verbose output (may expose sensitive data in logs) |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
 | `git-user-name` | No | `sonatype-guide[bot]` when broker is used, otherwise `AGP Bot` | Git user name for commits. |
 | `git-user-email` | No | `<user-id>+sonatype-guide[bot]@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
@@ -596,7 +596,8 @@ with:
 
 ### Verbose Logging
 
-For debugging, enable verbose output:
+Verbose mode logs the full AI conversation, including tool-call arguments such as file content. Only enable it for debugging sessions — do not leave it on permanently or in scheduled runs.
+
 ```yaml
 with:
   verbose: true
