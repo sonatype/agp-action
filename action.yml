@@ -118,6 +118,10 @@ inputs:
     description: "Mount the host Docker socket into the AGP container, enabling Docker commands and container-based tools (e.g., Testcontainers, Docker Compose) during setup and validation"
     required: false
     default: "false"
+  config-path:
+    description: "Path to the effective agp.yml written by the gate action. Read to resolve the governed Bedrock role (agent.awsRole)."
+    required: false
+    default: "agp.yml"
 
 outputs:
   run-id:
@@ -171,6 +175,36 @@ runs:
     # Override path: `github-token` input. Used for air-gapped runners, GHES
     # without OIDC federation, or local debugging. PRs in that case are
     # authored by whoever owns the supplied token.
+    # Assume the governed Bedrock role, when one is configured (GUIDE-3302).
+    #
+    # The role ARN lives in Sonatype Guide as agent.awsRole and arrives in the effective agp.yml
+    # the gate wrote into the workspace, so onboarding a repository needs no workflow edit and
+    # rotating the role does not touch any repo. The AGP CLI cannot do this itself: role
+    # assumption must complete before the container starts, and the CLI only ever consumes the
+    # already-minted AWS_* credentials (which the docker run step below already forwards).
+    #
+    # Skipped silently when the config has no Bedrock role, so repos that set up AWS credentials
+    # in their own workflow keep working unchanged.
+    - name: Resolve governed Bedrock role
+      id: bedrock-role
+      shell: bash
+      env:
+        CONFIG_PATH: ${{ inputs.config-path }}
+      run: |
+        bash "${{ github.action_path }}/scripts/resolve-bedrock-role.sh"
+
+    - name: Configure AWS credentials for Bedrock (OIDC)
+      if: ${{ steps.bedrock-role.outputs.role != '' }}
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ steps.bedrock-role.outputs.role }}
+        aws-region: ${{ steps.bedrock-role.outputs.region }}
+        # Default STS session is 1 hour, but the AGP job may run longer; every Bedrock call after
+        # T+60min then fails 403 authentication_failed and the SDK burns ~3 minutes retrying each
+        # one (GUIDE-2962). 5400s covers a 90-minute job. Silently capped if the role's
+        # MaxSessionDuration is lower, so verify that when configuring the role.
+        role-duration-seconds: 5400
+
     - name: Prepare GitHub authentication
       id: prepare-auth
       shell: bash
