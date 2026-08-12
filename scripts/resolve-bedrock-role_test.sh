@@ -20,10 +20,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/resolve-bedrock-role.sh"
 
 # The script parses YAML with python3 + PyYAML (as .github/workflows/test.yml already does).
-# Assert it up front: without it the script correctly hard-fails on a configured role, which
-# would show up here as a pile of confusing diffs rather than one clear message.
+# Most cases need a working parser, so this is a hard failure rather than a skip - the alternative
+# is a pile of confusing diffs. The missing-PyYAML branch itself is covered below via a shim, so
+# nothing is lost by requiring the real thing here.
 if ! python3 -c 'import yaml' >/dev/null 2>&1; then
-  echo "resolve-bedrock-role_test.sh: SKIPPED - python3 PyYAML is required" >&2
+  echo "resolve-bedrock-role_test.sh: FAILED - python3 with PyYAML is required to run this suite" >&2
   echo "  install with: python3 -m pip install pyyaml" >&2
   exit 1
 fi
@@ -71,28 +72,42 @@ region=us-west-2" \
   awsRole: arn:aws:iam::123456789012:role/agp-bedrock
   awsRegion: us-west-2')"
 
-check "emits role without region when awsRegion is absent" \
-  "role=arn:aws:iam::123456789012:role/agp-bedrock" \
+# aws-region is a REQUIRED input of configure-aws-credentials, so emitting a role without one
+# would make that action abort with "Input required and not supplied: aws-region" - the opaque
+# credential failure this script exists to prevent. Fail where the cause can be named.
+check "fails when awsRole is set but awsRegion is missing" "__EXIT_NONZERO__" \
   "$(run_resolve 'agent:
   provider: bedrock
   awsRole: arn:aws:iam::123456789012:role/agp-bedrock')"
 
+check "fails when awsRegion is present but blank" "__EXIT_NONZERO__" \
+  "$(run_resolve "agent:
+  provider: bedrock
+  awsRole: arn:aws:iam::123456789012:role/agp-bedrock
+  awsRegion: '   '")"
+
 check "accepts a role with a path" \
-  "role=arn:aws:iam::123456789012:role/team/sub/agp" \
+  "role=arn:aws:iam::123456789012:role/team/sub/agp
+region=us-west-2" \
   "$(run_resolve 'agent:
   provider: bedrock
+  awsRegion: us-west-2
   awsRole: arn:aws:iam::123456789012:role/team/sub/agp')"
 
 check "accepts the govcloud partition" \
-  "role=arn:aws-us-gov:iam::123456789012:role/agp" \
+  "role=arn:aws-us-gov:iam::123456789012:role/agp
+region=us-gov-west-1" \
   "$(run_resolve 'agent:
   provider: bedrock
+  awsRegion: us-gov-west-1
   awsRole: arn:aws-us-gov:iam::123456789012:role/agp')"
 
 check "trims surrounding whitespace" \
-  "role=arn:aws:iam::123456789012:role/agp" \
+  "role=arn:aws:iam::123456789012:role/agp
+region=us-west-2" \
   "$(run_resolve 'agent:
   provider: bedrock
+  awsRegion: us-west-2
   awsRole: "  arn:aws:iam::123456789012:role/agp  "')"
 
 # ── Not applicable: emit nothing, exit 0 ────────────────────────────────────────
@@ -194,6 +209,44 @@ check "rejects a role containing a tab" "__EXIT_NONZERO__" \
   "$(run_resolve 'agent:
   provider: bedrock
   awsRole: "arn:aws:iam::123456789012:role/r\tx"')"
+
+# ── awsRegion shape ─────────────────────────────────────────────────────────────
+# shellcheck disable=SC2016  # ${AWS_REGION} must stay literal: it is the value under test
+for bad_region in 'us-east-1 foo' '${AWS_REGION}' 'us-west-2; echo x' 'US-WEST-2' 'uswest2' 'us-west'; do
+  check "rejects a malformed awsRegion [${bad_region}]" "__EXIT_NONZERO__" \
+    "$(run_resolve "agent:
+  provider: bedrock
+  awsRole: arn:aws:iam::123456789012:role/agp
+  awsRegion: '${bad_region}'")"
+done
+
+for ok_region in us-west-2 eu-central-1 ap-southeast-1 us-gov-west-1 cn-north-1; do
+  check "accepts region [${ok_region}]" \
+    "role=arn:aws:iam::123456789012:role/agp
+region=${ok_region}" \
+    "$(run_resolve "agent:
+  provider: bedrock
+  awsRole: arn:aws:iam::123456789012:role/agp
+  awsRegion: ${ok_region}")"
+done
+
+# U+2028 / U+2029 are line breaks to any Unicode-aware splitter even though GITHUB_OUTPUT is
+# split on \n today, so the guard must match its own "control characters are rejected" claim.
+check "rejects a Unicode line separator in the role" "__EXIT_NONZERO__" \
+  "$(printf 'agent:\n  provider: bedrock\n  awsRegion: us-west-2\n  awsRole: "arn:aws:iam::123456789012:role/r\\u2028x"\n' > "${TMPDIR_TEST}/u2028.yml"; resolve_bedrock_role "${TMPDIR_TEST}/u2028.yml" 2>/dev/null || echo '__EXIT_NONZERO__')"
+
+# ── config-path containment (mirrors gate.sh's validate_config_path) ─────────────
+check "treats an empty config-path as the agp.yml default" "0" \
+  "$(CONFIG_PATH='' GITHUB_WORKSPACE="${TMPDIR_TEST}" main >/dev/null 2>&1; echo $?)"
+
+check "rejects an absolute config-path" "__EXIT_NONZERO__" \
+  "$(CONFIG_PATH=/etc/agp.yml GITHUB_WORKSPACE="${TMPDIR_TEST}" main 2>/dev/null || echo '__EXIT_NONZERO__')"
+
+check "rejects a config-path with a .. segment" "__EXIT_NONZERO__" \
+  "$(CONFIG_PATH=../../etc/agp.yml GITHUB_WORKSPACE="${TMPDIR_TEST}" main 2>/dev/null || echo '__EXIT_NONZERO__')"
+
+check "allows a legitimate name containing dots" "0" \
+  "$(CONFIG_PATH=agp..yml GITHUB_WORKSPACE="${TMPDIR_TEST}" main >/dev/null 2>&1; echo $?)"
 
 # ── awsRegion is emitted too, so it needs the same guard as the role ────────────
 check "rejects a newline in awsRegion (GITHUB_OUTPUT injection via the region)" "__EXIT_NONZERO__" \

@@ -30,7 +30,7 @@
 #      GUIDE-2953, and "no ${{ }} in run: blocks" is a standing rule).
 #
 # Inputs (supplied by action.yml):
-#   CONFIG_PATH — path to the effective agp.yml, relative to GITHUB_WORKSPACE or absolute
+#   CONFIG_PATH — path to the effective agp.yml, relative to GITHUB_WORKSPACE
 # Set by the Actions runtime:
 #   GITHUB_OUTPUT, GITHUB_WORKSPACE
 #
@@ -90,14 +90,16 @@ resolve_bedrock_role() {
   fi
 
   if [ "${wants_role}" -eq 1 ] && ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    # One ::error:: per logical failure. Each ::error:: is a separate workflow command, so
+    # splitting a sentence across several produces several fragmentary annotations; %0A puts the
+    # line breaks inside one.
+    local remedy="or set up AWS credentials in the workflow instead."
     if ! command -v python3 >/dev/null 2>&1; then
-      echo "::error::agent.awsRole is configured but python3 is not installed, so the governed" >&2
-      echo "::error::Bedrock role cannot be read. Install python3 (with PyYAML) on the runner," >&2
-      echo "::error::or set up AWS credentials in the workflow instead." >&2
+      echo "::error::agent.awsRole is configured but python3 is not installed, so the governed" \
+        "Bedrock role cannot be read.%0AInstall python3 (with PyYAML) on the runner, ${remedy}" >&2
     else
-      echo "::error::agent.awsRole is configured but PyYAML is unavailable, so the governed" >&2
-      echo "::error::Bedrock role cannot be read. Install it (pip install pyyaml) on the" >&2
-      echo "::error::runner, or set up AWS credentials in the workflow instead." >&2
+      echo "::error::agent.awsRole is configured but PyYAML is unavailable, so the governed" \
+        "Bedrock role cannot be read.%0AInstall it (pip install pyyaml) on the runner, ${remedy}" >&2
     fi
     return 1
   fi
@@ -108,6 +110,7 @@ resolve_bedrock_role() {
   # `|| parse_rc=$?` rather than `if ! ...` so the distinct exit 3 (malformed value) survives.
   parsed=$(CONFIG_FILE="${config_file}" python3 - <<'PY'
 import os
+import re
 import sys
 
 try:
@@ -152,22 +155,51 @@ if not role:
 # invariant resting on the downstream ARN regex happening to reject whatever was smuggled in.
 # Exit 3 so the caller reports it instead of silently keeping the first line.
 def has_control_chars(value):
-    return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+    # C0, DEL, C1, and the Unicode line/paragraph separators. U+2028/U+2029 do not split
+    # GITHUB_OUTPUT on today's runner, which splits on \n only, but any consumer using
+    # Unicode-aware splitlines() would treat them as breaks - so the predicate matches the
+    # "control characters are rejected" claim rather than just today's parser.
+    return any(
+        ord(ch) < 0x20 or ord(ch) == 0x7F or 0x80 <= ord(ch) <= 0x9F or ch in "\u2028\u2029"
+        for ch in value
+    )
 
 
 region = region.strip() if isinstance(region, str) else ""
 if has_control_chars(role) or has_control_chars(region):
     sys.exit(3)
 
+# A role without a region is unusable: aws-region is a required input of
+# configure-aws-credentials, so omitting the output makes that action abort with
+# "Input required and not supplied: aws-region" - the opaque credential failure this script
+# exists to prevent. Fail here, where the cause can be named.
+if not region:
+    sys.exit(4)
+
+# Shape-check the region for the same reason the role ARN is re-validated: agp.yml may reach
+# this wrapper without having passed through Guide's validator, and both values are handed to a
+# credential-configuring action.
+if not re.fullmatch(r"[a-z]{2}(-[a-z]+)+-\d+", region):
+    sys.exit(5)
+
 print(f"role={role}")
-if region:
-    print(f"region={region}")
+print(f"region={region}")
 PY
   ) || parse_rc=$?
 
   if [ "${parse_rc}" -eq 3 ]; then
-    echo "::error::agent.awsRole or agent.awsRegion in the governed configuration contains a" >&2
-    echo "::error::control character (e.g. a newline). Both must be single-line values." >&2
+    echo "::error::agent.awsRole or agent.awsRegion in the governed configuration contains a" \
+      "control character (e.g. a newline).%0ABoth must be single-line values." >&2
+    return 1
+  fi
+  if [ "${parse_rc}" -eq 4 ]; then
+    echo "::error::agent.awsRole is set but agent.awsRegion is missing.%0ABoth are required for" \
+      "the governed Bedrock role: aws-region is a mandatory input of the assume-role step." >&2
+    return 1
+  fi
+  if [ "${parse_rc}" -eq 5 ]; then
+    echo "::error::agent.awsRegion in the governed configuration is not a valid AWS region." \
+      "%0AExpected e.g. us-west-2." >&2
     return 1
   fi
   if [ "${parse_rc}" -ne 0 ]; then
@@ -189,8 +221,8 @@ PY
 
   # Re-validate: agp.yml is untrusted input and may not have passed through the CLI's schema.
   if [ "${#role}" -gt "${MAX_ROLE_ARN_LEN}" ] || ! printf '%s' "${role}" | grep -Eq "${IAM_ROLE_ARN_RE}"; then
-    echo "::error::agent.awsRole in the governed configuration is not a valid IAM role ARN." >&2
-    echo "::error::Expected e.g. arn:aws:iam::123456789012:role/agp-bedrock" >&2
+    echo "::error::agent.awsRole in the governed configuration is not a valid IAM role ARN." \
+      "%0AExpected e.g. arn:aws:iam::123456789012:role/agp-bedrock" >&2
     return 1
   fi
 
@@ -200,11 +232,47 @@ PY
   fi
 }
 
+# validate_config_path <path>
+# Same posture as gate.sh's validate_config_path: this reads the file the gate writes, so the two
+# actions should agree on what a legitimate config-path is. Rejects empty values, absolute paths
+# and any '..' path SEGMENT (matching '..' as a substring would wrongly reject 'agp..yml').
+# Not attacker-crossable - a workflow author who can set config-path can already add steps - but
+# divergent trust postures on the same input invite the looser one being treated as the contract.
+validate_config_path() {
+  local path="${1:-}" rest seg
+  if [ -z "${path}" ]; then
+    echo "::error::resolve-bedrock-role: config-path must not be empty." >&2
+    return 1
+  fi
+  case "${path}" in
+    /*)
+      echo "::error::resolve-bedrock-role: config-path must be a relative path within the" \
+        "workspace (got '${path}')." >&2
+      return 1 ;;
+  esac
+  rest="${path}"
+  while :; do
+    seg="${rest%%/*}"
+    if [ "${seg}" = ".." ]; then
+      echo "::error::resolve-bedrock-role: config-path must not contain '..' path segments" \
+        "(got '${path}')." >&2
+      return 1
+    fi
+    case "${rest}" in
+      */*) rest="${rest#*/}" ;;
+      *)   break ;;
+    esac
+  done
+  return 0
+}
+
 main() {
   local config_path="${CONFIG_PATH:-agp.yml}"
+  validate_config_path "${config_path}" || return 1
   local config_file="${config_path}"
-  # Resolve a relative path against the workspace, matching how the gate writes it.
-  if [ "${config_file#/}" = "${config_file}" ] && [ -n "${GITHUB_WORKSPACE:-}" ]; then
+  # Resolve against the workspace, matching how the gate writes it. Paths are relative by the
+  # check above, so no tilde or absolute handling is needed here.
+  if [ -n "${GITHUB_WORKSPACE:-}" ]; then
     config_file="${GITHUB_WORKSPACE}/${config_path}"
   fi
 

@@ -159,7 +159,9 @@ How the AI Fix agent authenticates depends on `agent.provider` in your Sonatype 
 ### Bedrock (governed role, no workflow changes)
 
 When `agent.provider` is `bedrock` and `agent.awsRole` is set in Sonatype Guide, this action
-assumes that role for you over GitHub OIDC before starting the container. Your workflow needs
+assumes that role for you over GitHub OIDC before starting the container. `agent.awsRegion` must
+be set as well — the assume-role step requires a region, so a role without one fails the step with
+a named error rather than being silently skipped. Your workflow needs
 nothing beyond the `id-token: write` permission it already grants:
 
 ```yaml
