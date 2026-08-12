@@ -195,6 +195,67 @@ check "rejects a role containing a tab" "__EXIT_NONZERO__" \
   provider: bedrock
   awsRole: "arn:aws:iam::123456789012:role/r\tx"')"
 
+# ── awsRegion is emitted too, so it needs the same guard as the role ────────────
+check "rejects a newline in awsRegion (GITHUB_OUTPUT injection via the region)" "__EXIT_NONZERO__" \
+  "$(run_resolve 'agent:
+  provider: bedrock
+  awsRole: arn:aws:iam::123456789012:role/agp-bedrock
+  awsRegion: "us-west-2\nrole=arn:aws:iam::999999999999:role/evil"')"
+
+check "rejects a carriage return in awsRegion" "__EXIT_NONZERO__" \
+  "$(run_resolve 'agent:
+  provider: bedrock
+  awsRole: arn:aws:iam::123456789012:role/agp-bedrock
+  awsRegion: "us-west-2\rx"')"
+
+check "trims surrounding whitespace on awsRegion" \
+  "role=arn:aws:iam::123456789012:role/agp
+region=us-west-2" \
+  "$(run_resolve 'agent:
+  provider: bedrock
+  awsRole: arn:aws:iam::123456789012:role/agp
+  awsRegion: "  us-west-2  "')"
+
+# ── Missing-PyYAML branch ───────────────────────────────────────────────────────
+# Exercised with a python3 shim earlier on PATH whose `import yaml` fails, so the branch that
+# exists precisely for this condition is not the one thing left uncovered. The shim also lets the
+# empty-value case be pinned down: an Anthropic repo carrying `awsRole: ''` must NOT be failed for
+# a field it never set.
+with_broken_pyyaml() {
+  local shim_dir="${TMPDIR_TEST}/shim"
+  mkdir -p "${shim_dir}"
+  cat >"${shim_dir}/python3" <<'SHIM'
+#!/usr/bin/env bash
+# Fail only the PyYAML probe; anything else behaves like a python3 that cannot parse YAML.
+if [ "$1" = "-c" ] && [ "$2" = "import yaml" ]; then
+  exit 1
+fi
+exit 0
+SHIM
+  chmod +x "${shim_dir}/python3"
+  PATH="${shim_dir}:${PATH}" "$@"
+}
+
+cfg_with_role="$(write_config 'agent:
+  provider: bedrock
+  awsRole: arn:aws:iam::123456789012:role/agp-bedrock')"
+check "fails loudly when a role is configured but PyYAML is missing" "__EXIT_NONZERO__" \
+  "$(with_broken_pyyaml resolve_bedrock_role "${cfg_with_role}" 2>/dev/null || echo '__EXIT_NONZERO__')"
+
+check "names PyYAML in the failure so the remedy is obvious" "0" \
+  "$(with_broken_pyyaml resolve_bedrock_role "${cfg_with_role}" 2>&1 >/dev/null | grep -c 'PyYAML' | head -1 | awk '{print ($1>0)?0:1}')"
+
+cfg_empty_role="$(write_config "agent:
+  provider: anthropic
+  awsRole: ''")"
+check "does NOT fail an empty awsRole when PyYAML is missing" "" \
+  "$(with_broken_pyyaml resolve_bedrock_role "${cfg_empty_role}" 2>/dev/null || echo '__EXIT_NONZERO__')"
+
+cfg_no_role="$(write_config 'agent:
+  provider: anthropic')"
+check "does NOT fail a config without awsRole when PyYAML is missing" "" \
+  "$(with_broken_pyyaml resolve_bedrock_role "${cfg_no_role}" 2>/dev/null || echo '__EXIT_NONZERO__')"
+
 # ── Drift guard against the CLI ─────────────────────────────────────────────────
 # The regex here must stay equivalent to IAM_ROLE_ARN_RE in
 # agentic-patches-ts/src/config/schema.ts. This asserts the shape rather than the exact text,

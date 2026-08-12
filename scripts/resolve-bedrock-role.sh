@@ -75,20 +75,30 @@ resolve_bedrock_role() {
 
   # Cheap pre-check so a parser problem can never silently DISCARD a configured role.
   #
-  # If the config never mentions awsRole there is nothing to honour and any parser limitation is
-  # irrelevant, so we skip quietly. But if it does mention awsRole and we then fail to parse, we
-  # must fail loudly: ignoring it would leave the run with no Bedrock credentials and only the
-  # opaque "Could not load credentials from any providers" downstream, which is precisely the
-  # silent-failure class GUIDE-3302 exists to remove.
-  local mentions_role=0
-  if grep -q 'awsRole' "${config_file}" 2>/dev/null; then
-    mentions_role=1
+  # If the config asks for no role there is nothing to honour and any parser limitation is
+  # irrelevant, so we skip quietly. If it does ask for one and we then cannot parse, we fail
+  # loudly: ignoring it would leave the run with no Bedrock credentials and only the opaque
+  # "Could not load credentials from any providers" downstream.
+  #
+  # The pattern requires a VALUE, not merely the key. The Guide UI writes `awsRole: ''` when a
+  # repo overrides an inherited Bedrock default to Anthropic, so keying on the key alone would
+  # hard-fail an Anthropic repo over a field it never set.
+  local wants_role=0
+  if grep -Eq "^[[:space:]]*awsRole:[[:space:]]*([^[:space:]'\"]|'[^']|\"[^\"])" \
+    "${config_file}" 2>/dev/null; then
+    wants_role=1
   fi
 
-  if [ "${mentions_role}" -eq 1 ] && ! python3 -c 'import yaml' >/dev/null 2>&1; then
-    echo "::error::agent.awsRole is configured but PyYAML is unavailable, so the governed" >&2
-    echo "::error::Bedrock role cannot be read. Install PyYAML on the runner" >&2
-    echo "::error::(pip install pyyaml) or set up AWS credentials in the workflow instead." >&2
+  if [ "${wants_role}" -eq 1 ] && ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "::error::agent.awsRole is configured but python3 is not installed, so the governed" >&2
+      echo "::error::Bedrock role cannot be read. Install python3 (with PyYAML) on the runner," >&2
+      echo "::error::or set up AWS credentials in the workflow instead." >&2
+    else
+      echo "::error::agent.awsRole is configured but PyYAML is unavailable, so the governed" >&2
+      echo "::error::Bedrock role cannot be read. Install it (pip install pyyaml) on the" >&2
+      echo "::error::runner, or set up AWS credentials in the workflow instead." >&2
+    fi
     return 1
   fi
 
@@ -135,23 +145,29 @@ if not role:
     # optional fields (observed in real configs: baseUrl: '', apiKeyEnv: '').
     sys.exit(0)
 
-# Reject any control character (newline, CR, tab, ...) before the value is written to
-# GITHUB_OUTPUT. A multi-line value is not merely a malformed ARN: `role=<line1>\n<line2>` in
-# GITHUB_OUTPUT lets a hostile config inject ADDITIONAL step outputs, since that file is
-# newline-delimited KEY=VALUE. Exit 3 so the caller reports it instead of silently keeping the
-# first line.
-if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in role):
+# Reject any control character (newline, CR, tab, ...) in EITHER value before it is written to
+# GITHUB_OUTPUT. A multi-line value is not merely malformed: that file is newline-delimited
+# KEY=VALUE, so `<key>=<line1>\n<line2>` lets a hostile config inject ADDITIONAL step outputs.
+# Both values are emitted, so both need the check - guarding only the role would leave the
+# invariant resting on the downstream ARN regex happening to reject whatever was smuggled in.
+# Exit 3 so the caller reports it instead of silently keeping the first line.
+def has_control_chars(value):
+    return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value)
+
+
+region = region.strip() if isinstance(region, str) else ""
+if has_control_chars(role) or has_control_chars(region):
     sys.exit(3)
 
 print(f"role={role}")
-if isinstance(region, str) and region.strip():
-    print(f"region={region.strip()}")
+if region:
+    print(f"region={region}")
 PY
   ) || parse_rc=$?
 
   if [ "${parse_rc}" -eq 3 ]; then
-    echo "::error::agent.awsRole in the governed configuration contains a control character" >&2
-    echo "::error::(e.g. a newline). Provide a single-line literal IAM role ARN." >&2
+    echo "::error::agent.awsRole or agent.awsRegion in the governed configuration contains a" >&2
+    echo "::error::control character (e.g. a newline). Both must be single-line values." >&2
     return 1
   fi
   if [ "${parse_rc}" -ne 0 ]; then
@@ -203,7 +219,12 @@ main() {
     done <<<"${out}"
     printf '%s\n' "${out}" >>"${GITHUB_OUTPUT}"
   else
-    echo "resolve-bedrock-role: no governed Bedrock role configured; leaving credentials as-is"
+    # Name the file that was inspected. config-path is declared independently on the gate action
+    # and on this one, so a consumer who points the gate at a custom path and forgets to mirror it
+    # here gets a skip; printing the path makes that mismatch visible instead of leaving it to be
+    # diagnosed from a downstream credential error.
+    echo "resolve-bedrock-role: no governed Bedrock role in ${config_file};" \
+      "leaving credentials as-is"
   fi
 }
 
