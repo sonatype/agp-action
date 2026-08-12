@@ -175,16 +175,26 @@ runs:
     # Override path: `github-token` input. Used for air-gapped runners, GHES
     # without OIDC federation, or local debugging. PRs in that case are
     # authored by whoever owns the supplied token.
-    # Assume the governed Bedrock role, when one is configured (GUIDE-3302).
+    - name: Prepare GitHub authentication
+      id: prepare-auth
+      shell: bash
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
+        INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+      run: |
+        bash "${{ github.action_path }}/scripts/prepare-auth.sh"
+
+    # Assume the governed Bedrock role, when one is configured.
     #
     # The role ARN lives in Sonatype Guide as agent.awsRole and arrives in the effective agp.yml
     # the gate wrote into the workspace, so onboarding a repository needs no workflow edit and
-    # rotating the role does not touch any repo. The AGP CLI cannot do this itself: role
-    # assumption must complete before the container starts, and the CLI only ever consumes the
-    # already-minted AWS_* credentials (which the docker run step below already forwards).
+    # rotating the role touches no repo. The AGP CLI cannot do this itself: role assumption must
+    # complete before the container starts, and the CLI only consumes the already-minted AWS_*
+    # credentials that the docker run step forwards.
     #
-    # Skipped silently when the config has no Bedrock role, so repos that set up AWS credentials
-    # in their own workflow keep working unchanged.
+    # Skipped when the config declares no Bedrock role, so repos that establish AWS credentials in
+    # their own workflow are unaffected.
     - name: Resolve governed Bedrock role
       id: bedrock-role
       shell: bash
@@ -199,21 +209,11 @@ runs:
       with:
         role-to-assume: ${{ steps.bedrock-role.outputs.role }}
         aws-region: ${{ steps.bedrock-role.outputs.region }}
-        # Default STS session is 1 hour, but the AGP job may run longer; every Bedrock call after
-        # T+60min then fails 403 authentication_failed and the SDK burns ~3 minutes retrying each
-        # one (GUIDE-2962). 5400s covers a 90-minute job. Silently capped if the role's
-        # MaxSessionDuration is lower, so verify that when configuring the role.
+        # A default STS session lasts 1 hour while an AGP job may run longer; Bedrock calls after
+        # expiry fail 403 authentication_failed and the SDK spends ~3 minutes retrying each one
+        # (GUIDE-2962). 5400s covers a 90-minute job. The role's MaxSessionDuration must be at
+        # least this, otherwise AssumeRole rejects the request outright.
         role-duration-seconds: 5400
-
-    - name: Prepare GitHub authentication
-      id: prepare-auth
-      shell: bash
-      env:
-        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
-        INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
-        INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
-      run: |
-        bash "${{ github.action_path }}/scripts/prepare-auth.sh"
 
     # Run AGP using pre-built Docker image (includes gh CLI)
     - name: Run AGP

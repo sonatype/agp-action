@@ -184,8 +184,10 @@ Two things must be set up on the AWS side, once per role:
    `arn:aws:bedrock:*::foundation-model/...` does not cover one.
 
 The action requests a 90-minute STS session, because the default one hour expires mid-run on
-longer jobs and every Bedrock call afterwards fails with `403 authentication_failed`. Ensure the
-role's `MaxSessionDuration` is at least `5400` seconds, otherwise the request is silently capped.
+longer jobs and every Bedrock call afterwards fails with `403 authentication_failed`. The role's
+`MaxSessionDuration` **must** be at least `5400` seconds: `AssumeRole` rejects a request whose
+requested duration exceeds it, so a role left at the 3600s default fails the step outright rather
+than quietly getting a shorter session.
 
 If `agent.awsRole` is not set, this step is skipped entirely and any AWS credentials your
 workflow established itself are used unchanged.
