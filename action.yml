@@ -118,6 +118,10 @@ inputs:
     description: "Mount the host Docker socket into the AGP container, enabling Docker commands and container-based tools (e.g., Testcontainers, Docker Compose) during setup and validation"
     required: false
     default: "false"
+  config-path:
+    description: "Path to the effective agp.yml written by the gate action. Read to resolve the governed Bedrock role (agent.awsRole)."
+    required: false
+    default: "agp.yml"
 
 outputs:
   run-id:
@@ -180,6 +184,36 @@ runs:
         INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
       run: |
         bash "${{ github.action_path }}/scripts/prepare-auth.sh"
+
+    # Assume the governed Bedrock role, when one is configured.
+    #
+    # The role ARN lives in Sonatype Guide as agent.awsRole and arrives in the effective agp.yml
+    # the gate wrote into the workspace, so onboarding a repository needs no workflow edit and
+    # rotating the role touches no repo. The AGP CLI cannot do this itself: role assumption must
+    # complete before the container starts, and the CLI only consumes the already-minted AWS_*
+    # credentials that the docker run step forwards.
+    #
+    # Skipped when the config declares no Bedrock role, so repos that establish AWS credentials in
+    # their own workflow are unaffected.
+    - name: Resolve governed Bedrock role
+      id: bedrock-role
+      shell: bash
+      env:
+        CONFIG_PATH: ${{ inputs.config-path }}
+      run: |
+        bash "${{ github.action_path }}/scripts/resolve-bedrock-role.sh"
+
+    - name: Configure AWS credentials for Bedrock (OIDC)
+      if: ${{ steps.bedrock-role.outputs.role != '' }}
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ steps.bedrock-role.outputs.role }}
+        aws-region: ${{ steps.bedrock-role.outputs.region }}
+        # A default STS session lasts 1 hour while an AGP job may run longer; Bedrock calls after
+        # expiry fail 403 authentication_failed and the SDK spends ~3 minutes retrying each one
+        # (GUIDE-2962). 5400s covers a 90-minute job. The role's MaxSessionDuration must be at
+        # least this, otherwise AssumeRole rejects the request outright.
+        role-duration-seconds: 5400
 
     # Run AGP using pre-built Docker image (includes gh CLI)
     - name: Run AGP

@@ -130,6 +130,7 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `docker-password` | No | | Docker registry password (for private registries only; used with `docker-username`) |
 | `skip-docker-pull` | No | `false` | Skip pulling the Docker image (for local testing with pre-built images) |
 | `mount-docker-socket` | No | `false` | Bind-mount the host Docker socket into the AGP container to enable container-based tools (Testcontainers, Docker Compose) during setup and validation. **Container-escape risk — see [Security](#security).** |
+| `config-path` | No | `agp.yml` | Path to the effective `agp.yml` written by the gate action. Read to resolve the governed Bedrock role (`agent.awsRole`). |
 | `verbose` | No | `false` | Enable verbose output (may expose sensitive data in logs) |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
 | `git-user-name` | No | `sonatype-guide[bot]` when broker is used, otherwise `AGP Bot` | Git user name for commits. |
@@ -147,9 +148,62 @@ Only set `mount-docker-socket: true` when Docker-in-Docker is genuinely required
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | API key for Claude AI (required for AI-powered fixes) |
+| `ANTHROPIC_API_KEY` | Only for the `anthropic` provider | API key for Claude AI. Not used when `agent.provider` is `bedrock`. |
 | `AGP_API_TOKEN` | Yes | Token for AGP run tracking |
 | `GITHUB_TOKEN` | No | Legacy fallback token. Prefer the `github-token` input or OIDC (default). Ignored when the OIDC broker is used. |
+
+## AI Provider Authentication
+
+How the AI Fix agent authenticates depends on `agent.provider` in your Sonatype Guide configuration.
+
+### Bedrock (governed role, no workflow changes)
+
+When `agent.provider` is `bedrock` and `agent.awsRole` is set in Sonatype Guide, this action
+assumes that role for you over GitHub OIDC before starting the container. `agent.awsRegion` must
+be set as well — the assume-role step requires a region, so a role without one fails the step with
+a named error rather than being silently skipped. Your workflow needs
+nothing beyond the `id-token: write` permission it already grants:
+
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write   # required
+```
+
+The role ARN is governed centrally, so onboarding a repository requires no workflow edit and
+rotating the role does not touch any repository. There is no secret to configure — an IAM role
+ARN is an identifier, not a credential.
+
+Two things must be set up on the AWS side, once per role:
+
+1. **Trust policy** — the role must accept GitHub's OIDC provider for each repository that uses
+   it. The `sub` claim looks like `repo:<owner>/<repo>:ref:refs/heads/main`, so a role scoped to
+   one repository rejects the others until they are added.
+2. **Permissions** — `bedrock:InvokeModel` (and `bedrock:InvokeModelWithResponseStream`) on the
+   model or inference profile named by `agent.model`. Note that an inference profile in another
+   AWS account needs a cross-account grant; a policy that only allows
+   `arn:aws:bedrock:*::foundation-model/...` does not cover one.
+
+The action requests a 90-minute STS session, because the default one hour expires mid-run on
+longer jobs and every Bedrock call afterwards fails with `403 authentication_failed`. The role's
+`MaxSessionDuration` **must** be at least `5400` seconds: `AssumeRole` rejects a request whose
+requested duration exceeds it, so a role left at the 3600s default fails the step outright rather
+than quietly getting a shorter session.
+
+If `agent.awsRole` is not set, this step is skipped entirely and any AWS credentials your
+workflow established itself are used unchanged.
+
+### Anthropic API
+
+When `agent.provider` is `anthropic`, set `ANTHROPIC_API_KEY` in the job environment:
+
+```yaml
+      - name: Run AGP
+        uses: sonatype/agp-action@v1
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
 
 ## Repository Setup
 

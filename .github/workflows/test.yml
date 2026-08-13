@@ -68,3 +68,7 @@ jobs:
       - name: Test prepare-auth classified-error parsing
         run: |
           bash scripts/prepare-auth_test.sh
+
+      - name: Test governed Bedrock role resolution
+        run: |
+          bash scripts/resolve-bedrock-role_test.sh
