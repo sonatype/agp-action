@@ -131,6 +131,7 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `skip-docker-pull` | No | `false` | Skip pulling the Docker image (for local testing with pre-built images) |
 | `mount-docker-socket` | No | `false` | Bind-mount the host Docker socket into the AGP container to enable container-based tools (Testcontainers, Docker Compose) during setup and validation. **Container-escape risk — see [Security](#security).** |
 | `config-path` | No | `agp.yml` | Path to the effective `agp.yml` written by the gate action. Read to resolve the governed Bedrock role (`agent.awsRole`). |
+| `role-duration-seconds` | No | | STS session duration for the governed Bedrock role. Empty uses AWS's 3600s default. Must not exceed the role's `MaxSessionDuration`. |
 | `verbose` | No | `false` | Enable verbose output (may expose sensitive data in logs) |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
 | `git-user-name` | No | `sonatype-guide[bot]` when broker is used, otherwise `AGP Bot` | Git user name for commits. |
@@ -185,11 +186,22 @@ Two things must be set up on the AWS side, once per role:
    AWS account needs a cross-account grant; a policy that only allows
    `arn:aws:bedrock:*::foundation-model/...` does not cover one.
 
-The action requests a 90-minute STS session, because the default one hour expires mid-run on
-longer jobs and every Bedrock call afterwards fails with `403 authentication_failed`. The role's
-`MaxSessionDuration` **must** be at least `5400` seconds: `AssumeRole` rejects a request whose
-requested duration exceeds it, so a role left at the 3600s default fails the step outright rather
-than quietly getting a shorter session.
+The STS session uses AWS's 3600-second default. On jobs that run longer than an hour the session
+expires mid-run and every subsequent Bedrock call fails with `403 authentication_failed`, costing
+~3 minutes of SDK retries each.
+
+To avoid that, raise the role's `MaxSessionDuration` and then request a matching duration:
+
+```yaml
+      - name: Run AGP
+        uses: sonatype/agp-action@v1
+        with:
+          role-duration-seconds: '5400'   # requires MaxSessionDuration >= 5400 on the role
+```
+
+Set the role first. `AssumeRole` **rejects** a request whose duration exceeds the role's
+`MaxSessionDuration` rather than capping it, so asking for more than the role allows fails the step
+outright.
 
 If `agent.awsRole` is not set, this step is skipped entirely and any AWS credentials your
 workflow established itself are used unchanged.

@@ -122,6 +122,10 @@ inputs:
     description: "Path to the effective agp.yml written by the gate action. Read to resolve the governed Bedrock role (agent.awsRole)."
     required: false
     default: "agp.yml"
+  role-duration-seconds:
+    description: "STS session duration for the governed Bedrock role. Empty uses AWS's 3600s default. Raising it avoids mid-run expiry on long jobs, but must not exceed the role's MaxSessionDuration or AssumeRole rejects the request."
+    required: false
+    default: ""
 
 outputs:
   run-id:
@@ -209,11 +213,16 @@ runs:
       with:
         role-to-assume: ${{ steps.bedrock-role.outputs.role }}
         aws-region: ${{ steps.bedrock-role.outputs.region }}
-        # A default STS session lasts 1 hour while an AGP job may run longer; Bedrock calls after
-        # expiry fail 403 authentication_failed and the SDK spends ~3 minutes retrying each one
-        # (GUIDE-2962). 5400s covers a 90-minute job. The role's MaxSessionDuration must be at
-        # least this, otherwise AssumeRole rejects the request outright.
-        role-duration-seconds: 5400
+        # Opt-in, and empty by default so AWS's own 3600s default applies.
+        #
+        # Requesting more than the role's MaxSessionDuration does not get capped - AssumeRole
+        # rejects the call outright - and MaxSessionDuration is 3600 unless someone raised it. So a
+        # hard-coded longer duration fails on every role that has not been prepared for it.
+        #
+        # Worth raising where you can: a session that expires mid-run makes every subsequent
+        # Bedrock call fail 403 authentication_failed, with ~3 minutes of SDK retries each
+        # (GUIDE-2962). Set this to 5400 for a 90-minute job once the role allows it.
+        role-duration-seconds: ${{ inputs.role-duration-seconds }}
 
     # Run AGP using pre-built Docker image (includes gh CLI)
     - name: Run AGP
