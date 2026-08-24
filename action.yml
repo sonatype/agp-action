@@ -67,6 +67,10 @@ inputs:
     description: "Maven settings.xml content for private repository authentication"
     required: false
     default: ""
+  gradle-init-script:
+    description: "Gradle init script content for private repository authentication"
+    required: false
+    default: ""
   verbose:
     description: "Enable verbose output (may expose sensitive data in logs)"
     required: false
@@ -239,6 +243,7 @@ runs:
         INPUT_VALIDATION_COMMANDS: ${{ inputs.validation-commands }}
         INPUT_NPMRC_CONTENT: ${{ inputs.npmrc-content }}
         INPUT_MAVEN_SETTINGS_XML: ${{ inputs.maven-settings-xml }}
+        INPUT_GRADLE_INIT_SCRIPT: ${{ inputs.gradle-init-script }}
         ANTHROPIC_BASE_URL: ${{ env.ANTHROPIC_BASE_URL }}
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_GIT_USER_NAME: ${{ steps.prepare-auth.outputs.git-user-name }}
@@ -281,6 +286,23 @@ runs:
           MVN_SETTINGS_ENV="-e MVN_SETTINGS=/home/agp/.m2/settings.xml"
         fi
 
+        # Create Gradle init script if provided. Gradle applies $GRADLE_USER_HOME/init.gradle
+        # automatically, so a project needs no build-file or command changes to pick up an
+        # authenticated repository. ~/.gradle exists in the image owned by the agp user, so the
+        # bind mount adds only this file and the directory stays writable for the wrapper
+        # download and caches.
+        GRADLE_INIT_MOUNT=""
+        GRADLE_INIT_ENV=""
+        if [ -n "$INPUT_GRADLE_INIT_SCRIPT" ]; then
+          GRADLE_INIT_PATH="${RUNNER_TEMP}/init.gradle"
+          printf '%s\n' "$INPUT_GRADLE_INIT_SCRIPT" > "$GRADLE_INIT_PATH"
+          # Use 644 instead of 600 so the agp user (uid 10000) inside Docker can read it
+          chmod 644 "$GRADLE_INIT_PATH"
+          echo "📦 Created Gradle init script for private repository authentication"
+          GRADLE_INIT_MOUNT="-v ${GRADLE_INIT_PATH}:/home/agp/.gradle/init.gradle:ro"
+          GRADLE_INIT_ENV="-e GRADLE_INIT_SCRIPT=/home/agp/.gradle/init.gradle"
+        fi
+
         # Mount Docker socket if requested (for Testcontainers, Docker Compose, etc.)
         DOCKER_SOCKET_OPTS=""
         if [ "${{ inputs.mount-docker-socket }}" = "true" ]; then
@@ -318,6 +340,7 @@ runs:
         docker run --rm \
           -v "${{ github.workspace }}:/github/workspace" \
           ${MVN_SETTINGS_MOUNT} \
+          ${GRADLE_INIT_MOUNT} \
           ${DOCKER_SOCKET_OPTS} \
           ${NPMRC_MOUNT} \
           -w /github/workspace \
@@ -364,6 +387,7 @@ runs:
           -e INPUT_GIT_USER_NAME \
           -e INPUT_GIT_USER_EMAIL \
           ${MVN_SETTINGS_ENV} \
+          ${GRADLE_INIT_ENV} \
           "${IMAGE}"
 
     # Parse outputs from AGP run (if any)

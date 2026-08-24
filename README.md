@@ -124,6 +124,8 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `group` | No | | Apply only a specific group by ID |
 | `validation-commands` | No | | Commands to validate upgrades (newline-separated) |
 | `npmrc-content` | No | | `.npmrc` file content for private registry authentication |
+| `maven-settings-xml` | No | | Maven `settings.xml` content for private repository authentication (Maven builds only) |
+| `gradle-init-script` | No | | Gradle init script content for private repository authentication (Gradle builds only). See [Private Gradle Repositories](#private-gradle-repositories) |
 | `anthropic-base-url` | No | | Custom Anthropic API endpoint |
 | `docker-image` | No | `sonatype/agp:latest` | Fully-qualified Docker image path (registry + tag) to pull the AGP image from |
 | `docker-username` | No | | Docker registry username (for private registries only; used with `docker-password`) |
@@ -428,6 +430,38 @@ For projects using a private npm registry (like Nexus or Artifactory), provide y
        AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
    ```
+
+### Private Gradle Repositories
+
+Gradle does not read Maven's `settings.xml`, so `maven-settings-xml` has no effect on a Gradle
+build. Use `gradle-init-script` instead. The content is mounted as `~/.gradle/init.gradle`,
+which Gradle applies to every build in the container — the project's `build.gradle`,
+`settings.gradle` and validation commands stay unchanged, so local and existing CI builds are
+unaffected.
+
+```yaml
+- name: Run AGP
+  uses: sonatype/agp-action@v1
+  with:
+    create-pr: true
+    gradle-init-script: |
+      allprojects {
+        repositories {
+          maven {
+            url = 'https://nexus.company.com/repository/maven-private/'
+            credentials {
+              username = '${{ secrets.MAVEN_USER }}'
+              password = '${{ secrets.MAVEN_PASSWORD }}'
+            }
+          }
+        }
+      }
+```
+
+For builds that resolve plugins from the private repository as well, add a matching
+`settingsEvaluated { settings -> settings.pluginManagement.repositories { ... } }` block.
+
+A `'` in a secret breaks the generated Groovy string, so use a credential without one.
 
 ### Proxy Support
 
