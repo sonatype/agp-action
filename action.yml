@@ -288,11 +288,13 @@ runs:
 
         # Create Gradle init script if provided. Gradle applies $GRADLE_USER_HOME/init.gradle
         # automatically, so a project needs no build-file or command changes to pick up an
-        # authenticated repository. ~/.gradle exists in the image owned by the agp user, so the
-        # bind mount adds only this file and the directory stays writable for the wrapper
-        # download and caches.
+        # authenticated repository. GRADLE_USER_HOME is pinned to the directory being mounted
+        # into, so the script is still applied if the image ever defaults it elsewhere — that
+        # would otherwise surface as an unresolved dependency with nothing pointing at the mount.
+        # /home/agp/.gradle exists in the image owned by the agp user, so the bind mount adds only
+        # this file and the directory stays writable for the wrapper download and caches.
         GRADLE_INIT_MOUNT=""
-        GRADLE_INIT_ENV=""
+        GRADLE_HOME_ENV=""
         if [ -n "$INPUT_GRADLE_INIT_SCRIPT" ]; then
           GRADLE_INIT_PATH="${RUNNER_TEMP}/init.gradle"
           printf '%s\n' "$INPUT_GRADLE_INIT_SCRIPT" > "$GRADLE_INIT_PATH"
@@ -300,7 +302,7 @@ runs:
           chmod 644 "$GRADLE_INIT_PATH"
           echo "📦 Created Gradle init script for private repository authentication"
           GRADLE_INIT_MOUNT="-v ${GRADLE_INIT_PATH}:/home/agp/.gradle/init.gradle:ro"
-          GRADLE_INIT_ENV="-e GRADLE_INIT_SCRIPT=/home/agp/.gradle/init.gradle"
+          GRADLE_HOME_ENV="-e GRADLE_USER_HOME=/home/agp/.gradle"
         fi
 
         # Mount Docker socket if requested (for Testcontainers, Docker Compose, etc.)
@@ -387,7 +389,7 @@ runs:
           -e INPUT_GIT_USER_NAME \
           -e INPUT_GIT_USER_EMAIL \
           ${MVN_SETTINGS_ENV} \
-          ${GRADLE_INIT_ENV} \
+          ${GRADLE_HOME_ENV} \
           "${IMAGE}"
 
     # Parse outputs from AGP run (if any)
