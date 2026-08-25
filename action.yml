@@ -298,6 +298,9 @@ runs:
         if [ -n "$INPUT_GRADLE_INIT_SCRIPT" ]; then
           GRADLE_INIT_PATH="${RUNNER_TEMP}/init.gradle"
           printf '%s\n' "$INPUT_GRADLE_INIT_SCRIPT" > "$GRADLE_INIT_PATH"
+          # Remove the rendered credentials from the runner when the step ends, so they do not
+          # outlive the job on a self-hosted runner
+          trap 'rm -f "$GRADLE_INIT_PATH"' EXIT
           # Use 644 instead of 600 so the agp user (uid 10000) inside Docker can read it
           chmod 644 "$GRADLE_INIT_PATH"
           echo "📦 Created Gradle init script for private repository authentication"
