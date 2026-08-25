@@ -450,18 +450,20 @@ unaffected.
           maven {
             url = 'https://nexus.company.com/repository/maven-private/'
             credentials {
-              username = '${{ secrets.MAVEN_USER }}'
-              password = '${{ secrets.MAVEN_PASSWORD }}'
+              username = '''${{ secrets.MAVEN_USER }}'''
+              password = '''${{ secrets.MAVEN_PASSWORD }}'''
             }
           }
         }
       }
 ```
 
+The credentials are interpolated into Groovy source, so a secret containing a `'` would end a
+`'...'` string early and fail with `Could not get unknown property` at the reported
+`init.gradle` line. The `'''...'''` quoting above tolerates it.
+
 For builds that resolve plugins from the private repository as well, add a matching
 `settingsEvaluated { settings -> settings.pluginManagement.repositories { ... } }` block.
-
-A `'` in a secret breaks the generated Groovy string, so use a credential without one.
 
 ### Proxy Support
 
