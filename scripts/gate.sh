@@ -10,6 +10,8 @@
 #
 # It fetches the governed effective agp.yml from Sonatype Guide over GitHub OIDC,
 # writes it to CONFIG_PATH, and emits a run|paused directive to GITHUB_OUTPUT.
+# The written file is also marked git-excluded locally (.git/info/exclude) so it never shows up
+# as a pending change and cannot trip the AGP CLI's clean-worktree pre-flight guard (GUIDE-3347).
 # Fail-closed: on anything other than HTTP 200 it leaves any committed config untouched
 # and fails (the download is staged outside the workspace and only moved into place after
 # a verified 200 + workspace-containment check, so a committed agp.yml is preserved on
@@ -140,9 +142,9 @@ validate_base_url() {
 }
 
 # validate_config_path <path>
-# config-path is written to, so keep it inside the workspace. Reject empty values,
-# absolute paths, and any '..' *path segment*. Matching '..' as a bare substring would
-# wrongly reject legitimate names like 'agp..yml', so each '/'-separated segment is
+# config-path is written to, so keep it inside the workspace. Reject empty values, control
+# characters, absolute paths, and any '..' *path segment*. Matching '..' as a bare substring
+# would wrongly reject legitimate names like 'agp..yml', so each '/'-separated segment is
 # compared exactly. Symlink-based escape (an intermediate directory or the leaf being a
 # symlink out of the workspace) is caught separately by is_inside_workspace in main().
 # Returns 0 if acceptable; otherwise prints an ::error:: and returns 1.
@@ -152,6 +154,17 @@ validate_config_path() {
     echo "::error::agp-gate: config-path must not be empty (fail-closed)." >&2
     return 1
   fi
+  # A newline (legal inside a YAML input value) would let one config-path smuggle EXTRA gitignore
+  # patterns into the .git/info/exclude entry the gate writes: 'agp.yml\nsrc/' appends both
+  # '/agp.yml' and 'src/', so real customer changes under src/ would vanish from
+  # `git status --porcelain` and the AGP CLI's dirty-worktree pre-flight check would pass on a
+  # genuinely dirty tree. Reject every control character, fail-closed (GUIDE-3347). The value is
+  # sanitised before it is logged because it is untrusted input printed into a workflow command.
+  case "${path}" in
+    *[[:cntrl:]]*)
+      echo "::error::agp-gate: config-path must not contain control characters (got '$(printf '%s' "${path}" | sanitize_for_log)')." >&2
+      return 1 ;;
+  esac
   case "${path}" in
     /*)
       echo "::error::agp-gate: config-path must be a relative path within the workspace (got '${path}')." >&2
@@ -190,6 +203,156 @@ is_inside_workspace() {
     "${root}"/*) return 0 ;;
     *)           return 1 ;;
   esac
+}
+
+# exclude_config_from_git <config-dir-real> <config-basename>
+# Make the governed config invisible to git by adding an anchored pattern for it to the
+# repo-local .git/info/exclude (GUIDE-3347).
+#
+# Why: configuration is governed centrally in the Sonatype Guide dashboard, so the effective
+# agp.yml is fetched fresh on every run and is NOT meant to live in the customer's repo. Left
+# alone it shows up as `?? agp.yml`, and the AGP CLI's pre-flight guard (`git status --porcelain`)
+# then aborts the run with "Uncommitted changes in working directory". info/exclude is the right
+# place: it is repo-local, never versioned, and not part of the customer's tree (unlike
+# .gitignore, which would itself become a pending change). Consumers previously tried
+# `git update-index --assume-unchanged`, which exits 128 for a file that is not already tracked
+# — i.e. for every new customer.
+#
+# Best-effort by design: this is bookkeeping, not the gate's contract (directive + config). Any
+# git problem (no repository, git not installed, unwritable exclude file) only warns and returns
+# 0, so the gate keeps working where this cannot be done. The script runs under
+# `set -euo pipefail`, so every git call is guarded with `|| { warn; return 0; }`.
+exclude_config_from_git() {
+  local dir="${1:-}" name="${2:-}"
+  local git_common_dir gitdir show_prefix in_repo_path pattern line exclude_file
+  local dir_log name_log path_log file_log
+  # One-line provenance note so a human reading .git/info/exclude knows where the entry came from.
+  local marker="# Sonatype Guide (agp-action gate): the config below is governed centrally in Guide and re-fetched every run — kept out of git on purpose (GUIDE-3347)."
+
+  if [ -z "${dir}" ] || [ -z "${name}" ]; then
+    echo "::warning::agp-gate: internal error: exclude_config_from_git needs a directory and a filename; skipping git-exclude bookkeeping." >&2
+    return 0
+  fi
+  # Defence in depth (GUIDE-3347): validate_config_path already rejects control characters, but
+  # this function APPENDS a line to info/exclude, so a newline here would append a second,
+  # caller-chosen pattern (e.g. 'src/') that could hide real customer changes from the AGP CLI's
+  # dirty-worktree check. Escaping does not help — '/', '!' and directory patterns are not
+  # escaped — so refuse to write anything at all if we are ever reached from a code path that
+  # skipped validation.
+  case "${dir}${name}" in
+    *$'\n'*|*$'\r'*)
+      echo "::warning::agp-gate: refusing to write a git-exclude entry for a path containing control characters; the config may appear as an uncommitted change." >&2
+      return 0 ;;
+  esac
+  # Untrusted input (derived from the config-path action input) is sanitised before it appears in
+  # any ::warning:: below, so it cannot inject its own GitHub workflow commands into the log.
+  dir_log="$(printf '%s' "${dir}" | sanitize_for_log)"
+  name_log="$(printf '%s' "${name}" | sanitize_for_log)"
+  if ! command -v git >/dev/null 2>&1; then
+    echo "::warning::agp-gate: git is not on PATH; could not mark '${name_log}' as git-excluded, so it may appear as an uncommitted change." >&2
+    return 0
+  fi
+
+  # Locate the exclude file through git rather than assuming "<root>/.git/" is a directory: in a
+  # linked worktree or a submodule, .git is a FILE pointing elsewhere. --git-common-dir (not
+  # --git-dir) yields the SHARED git directory, which is where info/exclude lives — a per-worktree
+  # git dir has no effective info/exclude. The answer may be relative to git's cwd, which is the
+  # directory passed to -C, so resolve it against that.
+  git_common_dir="$(git -C "${dir}" rev-parse --git-common-dir 2>/dev/null)" || git_common_dir=""
+  if [ -z "${git_common_dir}" ]; then
+    echo "::warning::agp-gate: '${dir_log}' is not inside a readable git repository; skipping git-exclude bookkeeping for '${name_log}'." >&2
+    return 0
+  fi
+  case "${git_common_dir}" in
+    /*) gitdir="${git_common_dir}" ;;
+    *)  gitdir="${dir}/${git_common_dir}" ;;
+  esac
+  # Resolving a relative answer against the -C directory is right on modern git (which returns
+  # e.g. '../../.git' from a subdirectory) but NOT on older git, which returned a bare '.git' from
+  # a subdirectory — there '<config-dir>/.git' would be a path that does not exist, so mkdir -p
+  # below would create a stray '.git' directory inside the customer's tree while the exclude stayed
+  # silently ineffective. Verify we really found a git directory before creating anything
+  # (GUIDE-3347); best-effort, so an unrecognised layout only warns.
+  if ! { [ -d "${gitdir}" ] && [ -e "${gitdir}/HEAD" ]; }; then
+    echo "::warning::agp-gate: could not locate the git directory for '${dir_log}' (this git reports a git-common-dir the gate cannot resolve); skipping git-exclude bookkeeping for '${name_log}'." >&2
+    return 0
+  fi
+
+  # The pattern must be relative to the REPOSITORY ROOT, not to GITHUB_WORKSPACE (usually the same
+  # directory, but not guaranteed). --show-prefix gives the config directory's path relative to the
+  # toplevel, either empty or with a trailing slash, so appending the basename yields the in-repo
+  # path. An empty result is legitimate (config at the repo root), so failure is detected by git's
+  # exit status, not by emptiness.
+  show_prefix="$(git -C "${dir}" rev-parse --show-prefix 2>/dev/null)" || {
+    echo "::warning::agp-gate: could not determine the repository-relative path of '${name_log}'; skipping git-exclude bookkeeping." >&2
+    return 0
+  }
+  in_repo_path="${show_prefix}${name}"
+  path_log="$(printf '%s' "${in_repo_path}" | sanitize_for_log)"
+
+  # Escape gitignore metacharacters so a legal-but-odd filename cannot turn into a glob. Backslash
+  # FIRST, otherwise the backslashes added by the later substitutions would be escaped too.
+  pattern="${in_repo_path//\\/\\\\}"
+  pattern="${pattern//\*/\\*}"
+  pattern="${pattern//\?/\\?}"
+  pattern="${pattern//\[/\\[}"
+  pattern="${pattern//\]/\\]}"
+  # gitignore strips unescaped trailing spaces; escaping the last one preserves the whole run.
+  case "${pattern}" in
+    *' ') pattern="${pattern% }\\ " ;;
+  esac
+  # The leading '/' anchors the pattern to the repository root, so it matches exactly this one path
+  # and not a same-named file elsewhere in the tree. It also means '#' (comment) and '!' (negation)
+  # can never be the first character, so neither needs escaping.
+  line="/${pattern}"
+
+  # A file that is already TRACKED is not hidden by info/exclude — it would still show up as
+  # " M agp.yml" and keep tripping the CLI's pre-flight guard. Say so plainly rather than leaving a
+  # silently ineffective exclude entry. The exclude line is still written (harmless now, correct
+  # once untracked). Never mutate the customer's index or history from here.
+  if git -C "${dir}" ls-files --error-unmatch -- ":(literal)${name}" >/dev/null 2>&1; then
+    echo "::warning::agp-gate: '${path_log}' is committed to this repository, so it will still show up as a modified file. Configuration is now governed centrally in Sonatype Guide and re-fetched on every run: untrack the committed copy ('git rm --cached ${path_log}' then commit) so it stops conflicting with the governed config." >&2
+  fi
+
+  exclude_file="${gitdir}/info/exclude"
+  file_log="$(printf '%s' "${exclude_file}" | sanitize_for_log)"
+  # info/ is not guaranteed to exist (git only creates it from the init template).
+  mkdir -p "${gitdir}/info" 2>/dev/null || {
+    echo "::warning::agp-gate: could not create the git info directory next to '${file_log}'; '${path_log}' may appear as an uncommitted change." >&2
+    return 0
+  }
+  # Idempotent: re-running the gate must not append duplicates. -Fx (whole-line, fixed-string) and
+  # not -F: a substring match against a longer line (e.g. '/agp.yml.bak') would otherwise suppress
+  # the append and leave the config visible to git.
+  if [ -f "${exclude_file}" ] && grep -Fxq "${line}" "${exclude_file}" 2>/dev/null; then
+    return 0
+  fi
+  # An existing file that does not end in a newline would have its last pattern corrupted by the
+  # append. Command substitution strips trailing newlines, so a non-empty result here means the
+  # last byte is not a newline.
+  # NOTE: '2>/dev/null' precedes '>>' on purpose in the appends below — redirections are applied
+  # left to right, so with the usual ordering bash's own "Permission denied" for an unwritable
+  # exclude file would leak to the real stderr before stderr was silenced, ahead of the tidy
+  # ::warning:: (GUIDE-3347).
+  if [ -s "${exclude_file}" ] && [ -n "$(tail -c 1 "${exclude_file}" 2>/dev/null || true)" ]; then
+    printf '\n' 2>/dev/null >> "${exclude_file}" || {
+      echo "::warning::agp-gate: could not append to '${file_log}'; '${path_log}' may appear as an uncommitted change." >&2
+      return 0
+    }
+  fi
+  # Write the provenance comment only the first time (it may already be there from an earlier run,
+  # possibly for a different config-path).
+  if ! { [ -f "${exclude_file}" ] && grep -Fxq "${marker}" "${exclude_file}" 2>/dev/null; }; then
+    printf '%s\n' "${marker}" 2>/dev/null >> "${exclude_file}" || {
+      echo "::warning::agp-gate: could not append to '${file_log}'; '${path_log}' may appear as an uncommitted change." >&2
+      return 0
+    }
+  fi
+  printf '%s\n' "${line}" 2>/dev/null >> "${exclude_file}" || {
+    echo "::warning::agp-gate: could not append to '${file_log}'; '${path_log}' may appear as an uncommitted change." >&2
+    return 0
+  }
+  return 0
 }
 
 main() {
@@ -306,6 +469,12 @@ main() {
   if [ -e "${config_resolved}" ]; then
     echo "agp-gate: replacing existing ${CONFIG_PATH} with the governed config from Guide."
   fi
+  # Hide the governed config from git BEFORE the rename, so there is never an instant in which
+  # git (or a concurrently running `git status`) could observe it as an untracked change — the
+  # failure mode from GUIDE-3347. Only reached on the success path: a fail-closed gate must not
+  # touch the customer's repository state at all. Best-effort; it never fails the gate.
+  exclude_config_from_git "${config_dir_real}" "$(basename "${CONFIG_PATH}")"
+
   _GATE_DEST_TMP="$(mktemp "${config_dir_real}/.agp-gate-config.XXXXXX")"
   cp "${_GATE_STAGING_TMP}" "${_GATE_DEST_TMP}"
   mv -f "${_GATE_DEST_TMP}" "${config_resolved}"

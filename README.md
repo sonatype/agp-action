@@ -548,13 +548,22 @@ The gate is **fail-closed**: if Guide returns anything other than HTTP 200, it f
 *without touching any committed `agp.yml`* (the response is staged outside the workspace and
 only moved into place after a verified 200), so a run never proceeds against a stale config.
 
+Configuration is governed centrally in the Sonatype Guide dashboard (org + repo level), so the
+effective `agp.yml` is **downloaded fresh on every run** — UI changes take effect on the next run
+— and is no longer meant to live in your repository. To keep that generated file from looking like
+a pending change (which trips AGP's "Uncommitted changes in working directory" pre-flight check),
+the gate adds an anchored entry for it to the checkout's `.git/info/exclude`, which is repo-local
+and never versioned, so nothing in your tree changes. **If `agp.yml` is currently committed**, the
+gate logs a warning: untrack it with `git rm --cached agp.yml` and commit, so the committed copy
+stops conflicting with the governed config (a tracked file cannot be hidden by `info/exclude`).
+
 ### Inputs
 
 | Input | Default | Description |
 |-------|---------|-------------|
 | `guide-url` | `""` (empty) | Base URL of the Sonatype Guide API. Must be HTTPS. The action manifest declares an empty default; the effective fallback (`$AGP_API_URL`, then `https://api.guide.sonatype.com`) is resolved in `scripts/gate.sh`. |
 | `audience` | `https://guide.sonatype.com` | OIDC audience expected by Sonatype Guide. Leave at the default unless Sonatype Support instructs otherwise. |
-| `config-path` | `agp.yml` | Where to write the rendered `agp.yml`. Must be a relative path inside the workspace; absolute paths, `..` segments, and paths resolving outside `$GITHUB_WORKSPACE` via symlinks are rejected (fail-closed). In the two-job pattern this file is local to the **gate** job's runner — only the `directive` output crosses to the AGP job. It's useful when you run the gate inline in the same job as AGP, or want to upload/inspect the rendered config as an artifact. |
+| `config-path` | `agp.yml` | Where to write the rendered `agp.yml`. Must be a relative path inside the workspace; absolute paths, `..` segments, control characters (a newline would smuggle extra patterns into the git-exclude entry below), and paths resolving outside `$GITHUB_WORKSPACE` via symlinks are rejected (fail-closed). The written file is marked git-excluded locally (`.git/info/exclude`), so it never appears as a pending change. In the two-job pattern this file is local to the **gate** job's runner — only the `directive` output crosses to the AGP job. It's useful when you run the gate inline in the same job as AGP, or want to upload/inspect the rendered config as an artifact. |
 
 ### Outputs
 
@@ -628,7 +637,9 @@ jobs:
 > by staging it outside the workspace and moving it into place only after a verified HTTP 200
 > + containment check. A committed file of that name is **replaced atomically on success** and
 > **left intact on a fail-closed outcome** (it is never deleted). In the two-job pattern each
-> job runs on a fresh runner, so this only matters for the inline-single-job pattern.
+> job runs on a fresh runner, so this only matters for the inline-single-job pattern. The file is
+> also added to the checkout's `.git/info/exclude` on success, so `git status` stays clean and the
+> generated config can never be mistaken for a change you made (GUIDE-3347).
 >
 > **Latency:** the gate bounds each Guide/OIDC call at `--max-time 10` with up to 2 retries,
 > so an unreachable Guide fails closed in roughly **35–75s per job** (two calls) rather than
@@ -683,6 +694,27 @@ jobs:
 with:
   node-version: '20'  # or '22'
 ```
+
+### Uncommitted changes in working directory
+
+**Problem:** the run stops with `✗ Uncommitted changes in working directory. Please commit or stash first.`
+
+**Solution:** the gate now adds the config it writes (`config-path`, default `agp.yml`) to the
+checkout's local `.git/info/exclude`, so the governed config no longer registers as a pending
+change. Upgrade to a gate version that includes this fix, and if `agp.yml` is **committed** to your
+repository, untrack it — configuration is governed centrally in Sonatype Guide and re-fetched on
+every run, so a tracked copy only ever shows up as a spurious modification:
+
+```bash
+git rm --cached agp.yml && git commit -m "Untrack agp.yml (governed centrally in Sonatype Guide)"
+```
+
+Do **not** use `git update-index --assume-unchanged agp.yml`: it fails with
+`fatal: Unable to mark file agp.yml` whenever the file is not already tracked.
+
+One other thing can defeat the exclusion: a **negation** in the repository's own `.gitignore`
+(`!agp.yml`, or a broad `!*.yml`) re-includes the file and overrides `.git/info/exclude`, so
+`git status` keeps reporting `?? agp.yml`. Drop that negation (or narrow it) if you hit this.
 
 ### Verbose Logging
 
