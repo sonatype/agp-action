@@ -4,7 +4,7 @@
 # Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
 # "Sonatype" is a trademark of Sonatype, Inc.
 #
-# resolve-bedrock-role_test.sh — unit tests for scripts/resolve-bedrock-role.sh (GUIDE-3302).
+# resolve-bedrock-role_test.sh — unit tests for scripts/resolve-bedrock-role.sh.
 #
 # resolve-bedrock-role.sh guards its main() behind a BASH_SOURCE check, so this test sources it
 # and drives resolve_bedrock_role() directly with config fixtures.
@@ -175,7 +175,7 @@ check "rejects a GitHub Actions expression" "__EXIT_NONZERO__" \
 
 # Command substitution / separators must never reach the assume-role input. The value is only
 # ever written to GITHUB_OUTPUT (never interpolated into a run: block), but rejecting it here
-# is defence in depth for the GUIDE-2953 class of bug.
+# is defence in depth for the script-injection class of bug.
 # shellcheck disable=SC2016  # the $(...) must stay literal: it is the injection attempt
 check "rejects command substitution in the role" "__EXIT_NONZERO__" \
   "$(run_resolve 'agent:

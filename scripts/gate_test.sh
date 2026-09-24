@@ -7,7 +7,7 @@
 # gate_test.sh — unit tests for scripts/gate.sh. Sources gate.sh (which does NOT run main
 # when sourced) and exercises the directive parsing/normalisation, the base-url /
 # config-path validators — the safety-critical, network-free logic of the gate — and the
-# git-exclude bookkeeping (against real throwaway repositories, GUIDE-3347).
+# git-exclude bookkeeping (against real throwaway repositories).
 
 set -euo pipefail
 
@@ -101,7 +101,7 @@ check "leading parent traversal rejected"     "reject" "$(ok_status validate_con
 check "embedded parent traversal rejected"    "reject" "$(ok_status validate_config_path 'foo/../etc/passwd')"
 check "empty config-path rejected"            "reject" "$(ok_status validate_config_path '')"
 # Control characters are rejected fail-closed: a newline in this input would smuggle a second
-# gitignore pattern into the .git/info/exclude entry the gate writes (GUIDE-3347), e.g.
+# gitignore pattern into the .git/info/exclude entry the gate writes, e.g.
 # 'agp.yml\nsrc/' would also hide everything under src/ from AGP's dirty-worktree pre-flight check.
 check "newline in config-path rejected"       "reject" "$(ok_status validate_config_path "$(printf 'agp.yml\nsrc/')")"
 check "carriage return in config-path rejected" "reject" "$(ok_status validate_config_path "$(printf 'agp.yml\rsrc/')")"
@@ -117,7 +117,7 @@ check "empty workspace root rejected"         "reject" "$(ok_status is_inside_wo
 check "empty resolved path rejected"          "reject" "$(ok_status is_inside_workspace '' '/w/repo')"
 check "root-of-/ rejected (no match-all)"     "reject" "$(ok_status is_inside_workspace '/etc/passwd' '/')"
 
-# --- git-exclude bookkeeping (exclude_config_from_git, GUIDE-3347) -------------------------
+# --- git-exclude bookkeeping (exclude_config_from_git) -------------------------------------
 # The behaviour under test IS git's (does `git status --porcelain` stay clean?), so these cases
 # drive real throwaway repositories rather than mocking git. Hermetic: the global/system git
 # config is neutralised for this whole section — the function shells out to git itself, so the
@@ -255,7 +255,7 @@ check "superstring case -> clean git status"   ""         "$(git -C "${repo_sub}
 
 # Control characters in the name would append a SECOND, caller-chosen pattern ('src/' here) that
 # hides real customer changes from AGP's dirty-worktree pre-flight check. validate_config_path
-# rejects such input outright; this function independently refuses to write anything (GUIDE-3347).
+# rejects such input outright; this function independently refuses to write anything.
 repo_ctl="$(new_repo control-char)"
 mkdir -p "${repo_ctl}/src"
 : > "${repo_ctl}/src/real-change.java"

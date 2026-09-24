@@ -11,7 +11,7 @@
 # It fetches the governed effective agp.yml from Sonatype Guide over GitHub OIDC,
 # writes it to CONFIG_PATH, and emits a run|paused directive to GITHUB_OUTPUT.
 # The written file is also marked git-excluded locally (.git/info/exclude) so it never shows up
-# as a pending change and cannot trip the AGP CLI's clean-worktree pre-flight guard (GUIDE-3347).
+# as a pending change and cannot trip the AGP CLI's clean-worktree pre-flight guard.
 # Fail-closed: on anything other than HTTP 200 it leaves any committed config untouched
 # and fails (the download is staged outside the workspace and only moved into place after
 # a verified 200 + workspace-containment check, so a committed agp.yml is preserved on
@@ -158,7 +158,7 @@ validate_config_path() {
   # patterns into the .git/info/exclude entry the gate writes: 'agp.yml\nsrc/' appends both
   # '/agp.yml' and 'src/', so real customer changes under src/ would vanish from
   # `git status --porcelain` and the AGP CLI's dirty-worktree pre-flight check would pass on a
-  # genuinely dirty tree. Reject every control character, fail-closed (GUIDE-3347). The value is
+  # genuinely dirty tree. Reject every control character, fail-closed. The value is
   # sanitised before it is logged because it is untrusted input printed into a workflow command.
   case "${path}" in
     *[[:cntrl:]]*)
@@ -207,7 +207,7 @@ is_inside_workspace() {
 
 # exclude_config_from_git <config-dir-real> <config-basename>
 # Make the governed config invisible to git by adding an anchored pattern for it to the
-# repo-local .git/info/exclude (GUIDE-3347).
+# repo-local .git/info/exclude.
 #
 # Why: configuration is governed centrally in the Sonatype Guide dashboard, so the effective
 # agp.yml is fetched fresh on every run and is NOT meant to live in the customer's repo. Left
@@ -233,7 +233,7 @@ exclude_config_from_git() {
     echo "::warning::agp-gate: internal error: exclude_config_from_git needs a directory and a filename; skipping git-exclude bookkeeping." >&2
     return 0
   fi
-  # Defence in depth (GUIDE-3347): validate_config_path already rejects control characters, but
+  # Defence in depth: validate_config_path already rejects control characters, but
   # this function APPENDS a line to info/exclude, so a newline here would append a second,
   # caller-chosen pattern (e.g. 'src/') that could hide real customer changes from the AGP CLI's
   # dirty-worktree check. Escaping does not help — '/', '!' and directory patterns are not
@@ -272,7 +272,7 @@ exclude_config_from_git() {
   # a subdirectory — there '<config-dir>/.git' would be a path that does not exist, so mkdir -p
   # below would create a stray '.git' directory inside the customer's tree while the exclude stayed
   # silently ineffective. Verify we really found a git directory before creating anything
-  # (GUIDE-3347); best-effort, so an unrecognised layout only warns.
+  #; best-effort, so an unrecognised layout only warns.
   if ! { [ -d "${gitdir}" ] && [ -e "${gitdir}/HEAD" ]; }; then
     echo "::warning::agp-gate: could not locate the git directory for '${dir_log}' (this git reports a git-common-dir the gate cannot resolve); skipping git-exclude bookkeeping for '${name_log}'." >&2
     return 0
@@ -333,7 +333,7 @@ exclude_config_from_git() {
   # NOTE: '2>/dev/null' precedes '>>' on purpose in the appends below — redirections are applied
   # left to right, so with the usual ordering bash's own "Permission denied" for an unwritable
   # exclude file would leak to the real stderr before stderr was silenced, ahead of the tidy
-  # ::warning:: (GUIDE-3347).
+  # ::warning::.
   if [ -s "${exclude_file}" ] && [ -n "$(tail -c 1 "${exclude_file}" 2>/dev/null || true)" ]; then
     printf '\n' 2>/dev/null >> "${exclude_file}" || {
       echo "::warning::agp-gate: could not append to '${file_log}'; '${path_log}' may appear as an uncommitted change." >&2
@@ -471,7 +471,7 @@ main() {
   fi
   # Hide the governed config from git BEFORE the rename, so there is never an instant in which
   # git (or a concurrently running `git status`) could observe it as an untracked change — the
-  # failure mode from GUIDE-3347. Only reached on the success path: a fail-closed gate must not
+  # failure mode this guards against. Only reached on the success path: a fail-closed gate must not
   # touch the customer's repository state at all. Best-effort; it never fails the gate.
   exclude_config_from_git "${config_dir_real}" "$(basename "${CONFIG_PATH}")"
 

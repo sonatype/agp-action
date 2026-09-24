@@ -215,7 +215,7 @@ runs:
         aws-region: ${{ steps.bedrock-role.outputs.region }}
         # A default STS session lasts 1 hour while an AGP job may run longer; Bedrock calls after
         # expiry fail 403 authentication_failed and the SDK spends ~3 minutes retrying each one
-        # (GUIDE-2962). 5400s covers a 90-minute job. The role's MaxSessionDuration must be at
+        #. 5400s covers a 90-minute job. The role's MaxSessionDuration must be at
         # least this, otherwise AssumeRole rejects the request outright.
         role-duration-seconds: 5400
 

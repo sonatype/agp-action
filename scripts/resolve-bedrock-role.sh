@@ -7,7 +7,7 @@
 # resolve-bedrock-role.sh — read the governed Bedrock IAM role out of the effective agp.yml
 # that the gate wrote into the workspace, and emit it for the assume-role step in action.yml.
 #
-# Why this exists (GUIDE-3302): the role ARN used to live in each repository's workflow as a
+# Why this exists: the role ARN used to live in each repository's workflow as a
 # secrets.AWS_ROLE_TO_ASSUME reference, so onboarding a repo required a workflow edit and
 # rotating the role required editing every repo. It is now governed centrally as agent.awsRole
 # in Sonatype Guide, exactly like agent.model / agent.awsRegion already are. The AGP CLI cannot
@@ -20,14 +20,14 @@
 #   * agent.provider == "bedrock"
 #   * agent.awsRole is a syntactically valid, literal IAM role ARN
 #
-# SECURITY: agp.yml is a trust boundary (GUIDE-2951) — it is fetched at run time from a remote
+# SECURITY: agp.yml is a trust boundary — it is fetched at run time from a remote
 # service, so its contents are untrusted input. Two consequences drive the design here:
 #   1. The ARN is re-validated even though the CLI's schema.ts validates it, because the config
 #      may reach this wrapper without ever passing through the CLI.
 #   2. The value is only ever written to GITHUB_OUTPUT and read back by the runner via a
 #      ${{ steps... }} expression into an action input. It is never interpolated into a shell
 #      command, so a value containing shell metacharacters cannot execute (that class of bug is
-#      GUIDE-2953, and "no ${{ }} in run: blocks" is a standing rule).
+#      script injection via workflow expressions, and "no ${{ }} in run: blocks" is a standing rule).
 #
 # Inputs (supplied by action.yml):
 #   CONFIG_PATH — path to the effective agp.yml, relative to GITHUB_WORKSPACE
