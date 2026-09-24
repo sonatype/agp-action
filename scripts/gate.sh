@@ -227,7 +227,7 @@ exclude_config_from_git() {
   local git_common_dir gitdir show_prefix in_repo_path pattern line exclude_file
   local dir_log name_log path_log file_log
   # One-line provenance note so a human reading .git/info/exclude knows where the entry came from.
-  local marker="# Sonatype Guide (agp-action gate): the config below is governed centrally in Guide and re-fetched every run — kept out of git on purpose (GUIDE-3347)."
+  local marker="# Sonatype Guide (agp-action gate): the config below is governed centrally in Guide and re-fetched every run — kept out of git on purpose."
 
   if [ -z "${dir}" ] || [ -z "${name}" ]; then
     echo "::warning::agp-gate: internal error: exclude_config_from_git needs a directory and a filename; skipping git-exclude bookkeeping." >&2

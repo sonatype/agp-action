@@ -7,7 +7,7 @@
 # A lightweight, Docker-free gate that fetches the governed effective agp.yml from
 # Sonatype Guide over GitHub OIDC, writes it to the workspace, and reports a run/pause
 # directive. Pairs with the two-job workflow so a paused (or fail-closed) repository
-# skips the heavy agp job entirely — no runner image pull (GUIDE-2737).
+# skips the heavy agp job entirely — no runner image pull.
 #
 # Auth shares scripts/mint-oidc-token.sh with scripts/prepare-auth.sh: it mints a GitHub
 # OIDC token for the configured audience (default https://guide.sonatype.com) and calls
@@ -20,7 +20,7 @@
 # meant to live in the customer's repository: the gate also marks it git-excluded locally (an
 # anchored entry in the repo's .git/info/exclude, which is repo-local and never versioned) so it
 # never appears as a pending change and cannot trip the AGP CLI's clean-worktree pre-flight guard
-# ("Uncommitted changes in working directory") — GUIDE-3347. Best-effort bookkeeping: if git is
+# ("Uncommitted changes in working directory"). Best-effort bookkeeping: if git is
 # unavailable it only warns. A config file that is still COMMITTED cannot be hidden this way, so
 # the gate warns and asks for it to be untracked (git rm --cached).
 
@@ -42,7 +42,7 @@ inputs:
     required: false
     default: "https://guide.sonatype.com"
   config-path:
-    description: "Where to write the rendered agp.yml. Must be a relative path inside the workspace; absolute paths, '..' segments, control characters, and paths that resolve outside $GITHUB_WORKSPACE via symlinks are rejected (fail-closed). The gate marks the written file as git-excluded locally (.git/info/exclude) so it never shows up as a pending change (GUIDE-3347); if this file is still committed to the repo, untrack it — configuration is governed centrally in Sonatype Guide and re-fetched every run."
+    description: "Where to write the rendered agp.yml. Must be a relative path inside the workspace; absolute paths, '..' segments, control characters, and paths that resolve outside $GITHUB_WORKSPACE via symlinks are rejected (fail-closed). The gate marks the written file as git-excluded locally (.git/info/exclude) so it never shows up as a pending change; if this file is still committed to the repo, untrack it — configuration is governed centrally in Sonatype Guide and re-fetched every run."
     required: false
     default: "agp.yml"
 

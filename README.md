@@ -639,7 +639,7 @@ jobs:
 > **left intact on a fail-closed outcome** (it is never deleted). In the two-job pattern each
 > job runs on a fresh runner, so this only matters for the inline-single-job pattern. The file is
 > also added to the checkout's `.git/info/exclude` on success, so `git status` stays clean and the
-> generated config can never be mistaken for a change you made (GUIDE-3347).
+> generated config can never be mistaken for a change you made.
 >
 > **Latency:** the gate bounds each Guide/OIDC call at `--max-time 10` with up to 2 retries,
 > so an unreachable Guide fails closed in roughly **35–75s per job** (two calls) rather than
