@@ -4,7 +4,7 @@
 # Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
 # "Sonatype" is a trademark of Sonatype, Inc.
 #
-# resolve-bedrock-role_test.sh — unit tests for scripts/resolve-bedrock-role.sh (GUIDE-3302).
+# resolve-bedrock-role_test.sh — unit tests for scripts/resolve-bedrock-role.sh.
 #
 # resolve-bedrock-role.sh guards its main() behind a BASH_SOURCE check, so this test sources it
 # and drives resolve_bedrock_role() directly with config fixtures.
@@ -175,7 +175,7 @@ check "rejects a GitHub Actions expression" "__EXIT_NONZERO__" \
 
 # Command substitution / separators must never reach the assume-role input. The value is only
 # ever written to GITHUB_OUTPUT (never interpolated into a run: block), but rejecting it here
-# is defence in depth for the GUIDE-2953 class of bug.
+# is defence in depth for the script-injection class of bug.
 # shellcheck disable=SC2016  # the $(...) must stay literal: it is the injection attempt
 check "rejects command substitution in the role" "__EXIT_NONZERO__" \
   "$(run_resolve 'agent:
@@ -327,6 +327,25 @@ pattern_has_account_id() {
 }
 check "ARN pattern is anchored at both ends" "anchored" "$(pattern_anchored)"
 check "ARN pattern requires a 12-digit account id" "present" "$(pattern_has_account_id)"
+
+# --- config-path validation must stay in step with gate.sh's ---
+# This script only READS the file the gate writes, so neither input is exploitable from here. The
+# point is the documented invariant: "the two actions should agree on what a legitimate config-path
+# is". When they drift, the looser posture is the one that ends up treated as the contract.
+accepts() { validate_config_path "$1" >/dev/null 2>&1 && echo accept || echo reject; }
+
+check "rejects a control character in config-path" "reject" "$(accepts "$(printf 'agp.yml\nsrc/')")"
+check "rejects a '.git' path segment"              "reject" "$(accepts '.git/src')"
+check "rejects '.git/config'"                      "reject" "$(accepts '.git/config')"
+check "rejects '.GIT' case-insensitively"          "reject" "$(accepts '.GIT/src')"
+check "rejects a nested '.git' segment"            "reject" "$(accepts 'a/.git/b')"
+# The pre-existing rules still hold, and names that merely begin with .git are legitimate.
+check "still rejects '..' segments"                "reject" "$(accepts '../escape.yml')"
+check "still rejects an absolute path"             "reject" "$(accepts '/abs/agp.yml')"
+check "still accepts a plain relative path"        "accept" "$(accepts 'agp.yml')"
+check "still accepts a subdirectory path"          "accept" "$(accepts 'sub/agp.yml')"
+check "still accepts '.gitignore'"                 "accept" "$(accepts '.gitignore')"
+check "still accepts '.github/agp.yml'"            "accept" "$(accepts '.github/agp.yml')"
 
 if [ "${fail}" -ne 0 ]; then
   echo "resolve-bedrock-role_test.sh: FAILURES"

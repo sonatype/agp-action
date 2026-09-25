@@ -5,8 +5,9 @@
 # "Sonatype" is a trademark of Sonatype, Inc.
 #
 # gate_test.sh — unit tests for scripts/gate.sh. Sources gate.sh (which does NOT run main
-# when sourced) and exercises the directive parsing/normalisation and the base-url /
-# config-path validators — the safety-critical, network-free logic of the gate.
+# when sourced) and exercises the directive parsing/normalisation, the base-url /
+# config-path validators — the safety-critical, network-free logic of the gate — and the
+# git-exclude bookkeeping (against real throwaway repositories).
 
 set -euo pipefail
 
@@ -99,6 +100,12 @@ check "absolute config-path rejected"         "reject" "$(ok_status validate_con
 check "leading parent traversal rejected"     "reject" "$(ok_status validate_config_path '../../escape.yml')"
 check "embedded parent traversal rejected"    "reject" "$(ok_status validate_config_path 'foo/../etc/passwd')"
 check "empty config-path rejected"            "reject" "$(ok_status validate_config_path '')"
+# Control characters are rejected fail-closed: a newline in this input would smuggle a second
+# gitignore pattern into the .git/info/exclude entry the gate writes, e.g.
+# 'agp.yml\nsrc/' would also hide everything under src/ from AGP's dirty-worktree pre-flight check.
+check "newline in config-path rejected"       "reject" "$(ok_status validate_config_path "$(printf 'agp.yml\nsrc/')")"
+check "carriage return in config-path rejected" "reject" "$(ok_status validate_config_path "$(printf 'agp.yml\rsrc/')")"
+check "tab in config-path rejected"           "reject" "$(ok_status validate_config_path "$(printf 'agp\t.yml')")"
 
 # --- workspace-containment guard (is_inside_workspace: pure string containment) ---
 check "path inside workspace accepted"        "accept" "$(ok_status is_inside_workspace '/w/repo/agp.yml' '/w/repo')"
@@ -110,9 +117,279 @@ check "empty workspace root rejected"         "reject" "$(ok_status is_inside_wo
 check "empty resolved path rejected"          "reject" "$(ok_status is_inside_workspace '' '/w/repo')"
 check "root-of-/ rejected (no match-all)"     "reject" "$(ok_status is_inside_workspace '/etc/passwd' '/')"
 
+# --- git-exclude bookkeeping (exclude_config_from_git) -------------------------------------
+# The behaviour under test IS git's (does `git status --porcelain` stay clean?), so these cases
+# drive real throwaway repositories rather than mocking git. Hermetic: the global/system git
+# config is neutralised for this whole section — the function shells out to git itself, so the
+# env has to be exported rather than wrapped around each call — and every repo gets a local
+# identity plus an explicit initial branch so no init.defaultBranch hint pollutes the output.
+# HOME/XDG_CONFIG_HOME are redirected into the temp dir as well, because GIT_CONFIG_GLOBAL does
+# NOT disable git's default excludes file: a developer's ~/.gitignore or
+# ~/.config/git/ignore containing e.g. '*.yml' would make every "status is clean" assertion below
+# pass vacuously and break the "sibling still seen" cases (each repo additionally pins
+# core.excludesFile=/dev/null, so the suite is immune however git resolves the default).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
+mkdir -p "${tmp}/home" "${tmp}/xdg"
+export HOME="${tmp}/home" XDG_CONFIG_HOME="${tmp}/xdg"
+
+# new_repo <name> -> path of a fresh repository at ${tmp}/<name>
+# The name is an argument rather than an internal counter on purpose: new_repo is called from a
+# command substitution, so a counter would be incremented in a subshell and every case would
+# silently share one repository.
+new_repo() {
+  local d="${tmp}/$1"
+  mkdir -p "${d}"
+  # -b needs git >= 2.28; fall back so the suite still runs on an older git.
+  git init -q -b main "${d}" >/dev/null 2>&1 || git init -q "${d}" >/dev/null 2>&1
+  git -C "${d}" config user.email "agp-test@example.invalid"
+  git -C "${d}" config user.name "AGP Test"
+  # Pin the excludes file so no ignore rule from the developer's machine can affect the assertions.
+  git -C "${d}" config core.excludesFile /dev/null
+  printf '%s' "${d}"
+}
+# grep_line <file> <line> -> accept|reject (exact, fixed-string match)
+grep_line() { if grep -Fxq "$2" "$1" 2>/dev/null; then echo accept; else echo reject; fi; }
+
+# The ticket's actual regression: an untracked governed config must not show up in git status.
+repo="$(new_repo plain)"
+: > "${repo}/agp.yml"
+exclude_config_from_git "${repo}" "agp.yml" 2>/dev/null
+check "untracked config -> clean git status"   ""         "$(git -C "${repo}" status --porcelain)"
+check "anchored pattern written"               "accept"   "$(grep_line "${repo}/.git/info/exclude" '/agp.yml')"
+
+# Idempotent: the gate runs on every workflow run (twice per run in the two-job pattern).
+exclude_config_from_git "${repo}" "agp.yml" 2>/dev/null
+exclude_config_from_git "${repo}" "agp.yml" 2>/dev/null
+check "re-running appends no duplicate line"   "1"        "$(grep -Fxc '/agp.yml' "${repo}/.git/info/exclude" || true)"
+check "provenance comment written exactly once" "1"       "$(grep -Fc 'Sonatype Guide (agp-action gate)' "${repo}/.git/info/exclude" || true)"
+
+# A nested config-path must be anchored from the REPOSITORY ROOT, not from the config's directory.
+repo_nested="$(new_repo nested)"
+mkdir -p "${repo_nested}/sub/dir"
+: > "${repo_nested}/sub/dir/agp.yml"
+exclude_config_from_git "${repo_nested}/sub/dir" "agp.yml" 2>/dev/null
+check "nested path anchored from repo root"    "accept"   "$(grep_line "${repo_nested}/.git/info/exclude" '/sub/dir/agp.yml')"
+check "nested config -> clean git status"      ""         "$(git -C "${repo_nested}" status --porcelain)"
+
+# A legal-but-odd filename must not become a glob: 'agp?.yml' is escaped, so the same-length
+# 'agpX.yml' stays visible to git (an unescaped '?' would have swallowed it).
+repo_glob="$(new_repo glob)"
+: > "${repo_glob}/agp?.yml"
+: > "${repo_glob}/agpX.yml"
+exclude_config_from_git "${repo_glob}" 'agp?.yml' 2>/dev/null
+check "glob metacharacter escaped in pattern"  "accept"   "$(grep_line "${repo_glob}/.git/info/exclude" '/agp\?.yml')"
+check "escaped name excluded, sibling still seen" "?? agpX.yml" "$(git -C "${repo_glob}" status --porcelain)"
+
+# Appending to an exclude file with no trailing newline must not corrupt its last pattern.
+repo_nonl="$(new_repo no-trailing-newline)"
+mkdir -p "${repo_nonl}/.git/info"
+printf 'legacy-pattern.txt' > "${repo_nonl}/.git/info/exclude"   # deliberately no newline
+: > "${repo_nonl}/legacy-pattern.txt"
+: > "${repo_nonl}/agp.yml"
+exclude_config_from_git "${repo_nonl}" "agp.yml" 2>/dev/null
+check "pre-existing last pattern preserved"    "accept"   "$(grep_line "${repo_nonl}/.git/info/exclude" 'legacy-pattern.txt')"
+check "both patterns effective -> clean status" ""        "$(git -C "${repo_nonl}" status --porcelain)"
+
+# Legacy repos with a COMMITTED agp.yml: info/exclude cannot hide a tracked file, so the function
+# must still succeed (never fail the gate, never touch the index) and warn the user to untrack it.
+# git status is therefore expected to keep showing the modification — that is the point of the warning.
+repo_tracked="$(new_repo tracked)"
+printf 'version: "1"\n' > "${repo_tracked}/agp.yml"
+git -C "${repo_tracked}" add agp.yml >/dev/null 2>&1
+git -C "${repo_tracked}" commit -q -m "commit a legacy agp.yml" >/dev/null 2>&1
+printf 'version: "2"\n' > "${repo_tracked}/agp.yml"   # as if the gate had just overwritten it
+check "tracked config: still returns 0"        "0"        "$(exclude_config_from_git "${repo_tracked}" "agp.yml" >/dev/null 2>&1; echo $?)"
+check "tracked config: warns to untrack it"    "warned"   "$(if exclude_config_from_git "${repo_tracked}" "agp.yml" 2>&1 >/dev/null | grep -q 'git rm --cached'; then echo warned; else echo silent; fi)"
+check "tracked config: exclude line still added" "accept" "$(grep_line "${repo_tracked}/.git/info/exclude" '/agp.yml')"
+check "tracked config: modification stays visible (hence the warning)" " M agp.yml" "$(git -C "${repo_tracked}" status --porcelain)"
+
+# Linked worktree: .git is a FILE there, and info/exclude only lives in the SHARED git dir — the
+# case --git-common-dir (rather than --git-dir) exists for.
+repo_main="$(new_repo worktree-main)"
+printf 'x\n' > "${repo_main}/seed.txt"
+git -C "${repo_main}" add seed.txt >/dev/null 2>&1
+git -C "${repo_main}" commit -q -m "seed" >/dev/null 2>&1
+wt="${tmp}/worktree-linked"
+git -C "${repo_main}" worktree add -q -b wt "${wt}" >/dev/null 2>&1 || true
+: > "${wt}/agp.yml"
+exclude_config_from_git "${wt}" "agp.yml" 2>/dev/null
+check "worktree: pattern lands in the shared git dir" "accept" "$(grep_line "${repo_main}/.git/info/exclude" '/agp.yml')"
+check "worktree: clean git status"             ""         "$(git -C "${wt}" status --porcelain)"
+
+# A character-class glob must not be able to hide a sibling: 'a[bc].yml' is a legal filename, and
+# an unescaped '[' / ']' would turn the pattern into a class that matches 'ab.yml'/'ac.yml'.
+repo_class="$(new_repo char-class)"
+: > "${repo_class}/a[bc].yml"
+: > "${repo_class}/ab.yml"
+exclude_config_from_git "${repo_class}" 'a[bc].yml' 2>/dev/null
+check "bracket metacharacters escaped"         "accept"   "$(grep_line "${repo_class}/.git/info/exclude" '/a\[bc\].yml')"
+check "character-class sibling stays visible"  "?? ab.yml" "$(git -C "${repo_class}" status --porcelain)"
+
+# Backslash must be escaped FIRST: escaping '*' before '\' would double the backslash the '*'
+# escape just added, yielding a pattern that matches neither the file nor anything else.
+repo_bs="$(new_repo backslash)"
+: > "${repo_bs}/a\\*.yml"
+exclude_config_from_git "${repo_bs}" 'a\*.yml' 2>/dev/null
+check "backslash escaped before glob chars"    "accept"   "$(grep_line "${repo_bs}/.git/info/exclude" '/a\\\*.yml')"
+check "backslash+glob name -> clean status"    ""         "$(git -C "${repo_bs}" status --porcelain)"
+
+# gitignore strips unescaped trailing spaces, so a name ending in a space needs its last space
+# escaped; without that the pattern would degrade to '/agp.yml' and hide the WRONG file.
+repo_sp="$(new_repo trailing-space)"
+: > "${repo_sp}/agp.yml "
+: > "${repo_sp}/agp.yml"
+exclude_config_from_git "${repo_sp}" 'agp.yml ' 2>/dev/null
+check "trailing space escaped in pattern"      "accept"   "$(grep_line "${repo_sp}/.git/info/exclude" '/agp.yml\ ')"
+check "trailing-space name excluded, plain sibling seen" "?? agp.yml" "$(git -C "${repo_sp}" status --porcelain)"
+
+# The duplicate check must be a whole-line match: a pre-existing longer line that merely CONTAINS
+# the pattern (here '/agp.yml.bak') must not be mistaken for our entry, or the append is skipped
+# and the config stays visible to git.
+repo_sub="$(new_repo superstring)"
+mkdir -p "${repo_sub}/.git/info"
+printf '/agp.yml.bak\n' > "${repo_sub}/.git/info/exclude"
+: > "${repo_sub}/agp.yml"
+exclude_config_from_git "${repo_sub}" "agp.yml" 2>/dev/null
+check "superstring line does not suppress append" "accept" "$(grep_line "${repo_sub}/.git/info/exclude" '/agp.yml')"
+check "superstring case -> clean git status"   ""         "$(git -C "${repo_sub}" status --porcelain)"
+
+# Control characters in the name would append a SECOND, caller-chosen pattern ('src/' here) that
+# hides real customer changes from AGP's dirty-worktree pre-flight check. validate_config_path
+# rejects such input outright; this function independently refuses to write anything.
+repo_ctl="$(new_repo control-char)"
+mkdir -p "${repo_ctl}/src"
+: > "${repo_ctl}/src/real-change.java"
+: > "${repo_ctl}/agp.yml"
+injected="$(printf 'agp.yml\nsrc/')"
+check "control char in name: returns 0"        "0"        "$(exclude_config_from_git "${repo_ctl}" "${injected}" >/dev/null 2>&1; echo $?)"
+check "control char in name: nothing written"  "reject"   "$(grep_line "${repo_ctl}/.git/info/exclude" 'src/')"
+check "control char in name: real change stays visible" "?? agp.yml
+?? src/" "$(git -C "${repo_ctl}" status --porcelain)"
+
+# A '.git' segment is inside the workspace, so the containment check accepts it, but it aims the write
+# at git's own administrative directory. '.git/config' would replace the repo's config with YAML;
+# '.git/<anything>' makes --show-prefix return EMPTY, so the pattern collapses from '/.git/src' to
+# '/src' and hides everything under the real top-level src/ — the same dirty-tree bypass the
+# control-character check prevents, reached by a different route.
+check "'.git/src' rejected"                    "__EXIT_NONZERO__" "$(validate_config_path '.git/src' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+check "'.git/config' rejected"                 "__EXIT_NONZERO__" "$(validate_config_path '.git/config' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+check "'.GIT/src' rejected (case-insensitive)" "__EXIT_NONZERO__" "$(validate_config_path '.GIT/src' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+check "nested 'a/.git/b' rejected"             "__EXIT_NONZERO__" "$(validate_config_path 'a/.git/b' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+# ...and names that merely START with .git are legitimate and must still be accepted.
+check "'.gitignore' still accepted"            "ok" "$(validate_config_path '.gitignore' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+check "'.github/agp.yml' still accepted"       "ok" "$(validate_config_path '.github/agp.yml' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+
+# Defence in depth: reached with a git-dir path anyway, the function must write nothing rather than
+# compute a pattern against the wrong root.
+repo_gd="$(new_repo gitdir)"
+mkdir -p "${repo_gd}/src"
+: > "${repo_gd}/src/app.js"
+git -C "${repo_gd}" add -A
+git -C "${repo_gd}" -c commit.gpgsign=false commit -qm init
+gd_real="$(cd "${repo_gd}/.git" && pwd -P)"
+gd_ws="$(cd "${repo_gd}" && pwd -P)"
+check "git-dir path: returns 0"          "0"        "$(exclude_config_from_git "${gd_real}" "src" "${gd_ws}" >/dev/null 2>&1; echo $?)"
+check "git-dir path: nothing written"    "reject"   "$(grep_line "${repo_gd}/.git/info/exclude" '/src')"
+: > "${repo_gd}/src/leftover.js"
+check "git-dir path: leftovers stay visible" "?? src/leftover.js" "$(git -C "${repo_gd}" status --porcelain)"
+
+# The suggested untrack command must survive being pasted verbatim: '--' so a leading '-' is not read
+# as a switch, and %q quoting so a space does not split it into two pathspecs.
+repo_dash="$(new_repo dashname)"
+: > "${repo_dash}/-weird.yml"
+git -C "${repo_dash}" add -A
+git -C "${repo_dash}" -c commit.gpgsign=false commit -qm init
+dash_ws="$(cd "${repo_dash}" && pwd -P)"
+check "untrack hint uses '--'" "found" \
+  "$(exclude_config_from_git "${dash_ws}" "-weird.yml" "${dash_ws}" 2>&1 >/dev/null | grep -q 'git rm --cached -- ' && echo found || echo missing)"
+repo_space="$(new_repo spacename)"
+: > "${repo_space}/my config.yml"
+git -C "${repo_space}" add -A
+git -C "${repo_space}" -c commit.gpgsign=false commit -qm init
+space_ws="$(cd "${repo_space}" && pwd -P)"
+check "untrack hint escapes a space" "escaped" \
+  "$(exclude_config_from_git "${space_ws}" "my config.yml" "${space_ws}" 2>&1 >/dev/null | grep -q 'my\\ config.yml' && echo escaped || echo raw)"
+
+# A committed config must be reported even when the configured case differs from the committed case.
+# On a case-insensitive filesystem (macOS APFS, Windows) git sets core.ignorecase=true and the index
+# keeps the committed spelling, so a byte-exact `:(literal)` pathspec misses — leaving the gate
+# silent in the one case the warning exists for, and the run aborting on " M agp.yml" unexplained.
+# Only meaningful where the filesystem really is case-insensitive; skipped elsewhere so the suite
+# stays honest on Linux CI.
+icase_repo="$(new_repo icase)"
+: > "${icase_repo}/agp.yml"
+git -C "${icase_repo}" add agp.yml
+git -C "${icase_repo}" -c commit.gpgsign=false commit -qm "commit the config"
+if [ "$(git -C "${icase_repo}" config --get core.ignorecase 2>/dev/null || true)" = "true" ]; then
+  check "tracked config, different case: warns" "warned" \
+    "$(exclude_config_from_git "${icase_repo}" "AGP.yml" "${icase_repo}" 2>&1 >/dev/null | grep -q 'is committed to this repository' && echo warned || echo silent)"
+else
+  check "tracked config, different case: warns (skipped, case-sensitive FS)" "skip" "skip"
+fi
+# The exact-case form must warn on every filesystem.
+check "tracked config, exact case: warns" "warned" \
+  "$(exclude_config_from_git "${icase_repo}" "agp.yml" "${icase_repo}" 2>&1 >/dev/null | grep -q 'is committed to this repository' && echo warned || echo silent)"
+# ...and an untracked config must NOT warn, whatever the filesystem.
+untracked_repo="$(new_repo untracked)"
+: > "${untracked_repo}/agp.yml"
+check "untracked config: no committed-file warning" "silent" \
+  "$(exclude_config_from_git "${untracked_repo}" "agp.yml" "${untracked_repo}" 2>&1 >/dev/null | grep -q 'is committed to this repository' && echo warned || echo silent)"
+
+# The workspace is NOT a repository root but an ANCESTOR is one (actions/checkout with `path:`, or a
+# self-hosted work dir nested inside someone's repo). git rev-parse walks upwards and finds the
+# ancestor, so without the workspace check the entry lands in the WRONG repository: a silent no-op
+# that leaves the real checkout dirty and still aborts the run.
+anc="${tmp}/ancestor"
+mkdir -p "${anc}/work/myrepo/src"
+git -C "${anc}" init -q
+git -C "${anc}" config user.email t@t
+git -C "${anc}" config user.name t
+: > "${anc}/root.txt"
+git -C "${anc}" add -A
+git -C "${anc}" -c commit.gpgsign=false commit -qm init
+git -C "${anc}/work/myrepo/src" init -q
+anc_ws="$(cd "${anc}/work/myrepo" && pwd -P)"
+: > "${anc_ws}/agp.yml"
+check "workspace not a repo root: returns 0"    "0"      "$(exclude_config_from_git "${anc_ws}" "agp.yml" "${anc_ws}" >/dev/null 2>&1; echo $?)"
+check "workspace not a repo root: warns"        "warned" "$(exclude_config_from_git "${anc_ws}" "agp.yml" "${anc_ws}" 2>&1 >/dev/null | grep -q 'not the workspace' && echo warned || echo silent)"
+check "workspace not a repo root: ancestor untouched" "reject" "$(grep_line "${anc}/.git/info/exclude" '/work/myrepo/agp.yml')"
+
+# The control: a config in a SUBDIRECTORY of the workspace is the same repository, so it must still
+# be excluded — the check must not fire merely because the config is not at the root.
+sub_ws="${tmp}/subws"
+mkdir -p "${sub_ws}/ci"
+git -C "${sub_ws}" init -q
+git -C "${sub_ws}" config user.email t@t
+git -C "${sub_ws}" config user.name t
+: > "${sub_ws}/keep.txt"
+git -C "${sub_ws}" add -A
+git -C "${sub_ws}" -c commit.gpgsign=false commit -qm init
+sub_real="$(cd "${sub_ws}" && pwd -P)"
+: > "${sub_real}/ci/agp.yml"
+exclude_config_from_git "${sub_real}/ci" "agp.yml" "${sub_real}" >/dev/null 2>&1
+check "config in a subdir of the workspace: still excluded" "accept" "$(grep_line "${sub_real}/.git/info/exclude" '/ci/agp.yml')"
+check "config in a subdir of the workspace: status clean"   ""            "$(git -C "${sub_real}" status --porcelain)"
+
+# Not a git repository at all: best-effort means warn and return 0, never abort the gate.
+plain_dir="${tmp}/not-a-repo"
+mkdir -p "${plain_dir}"
+check "no git repo: returns 0 (best-effort)"   "0"        "$(exclude_config_from_git "${plain_dir}" "agp.yml" >/dev/null 2>&1; echo $?)"
+check "missing arguments: returns 0"           "0"        "$(exclude_config_from_git "" "" >/dev/null 2>&1; echo $?)"
+
 # --- log sanitiser defangs control chars and '::' workflow-command markers ---
 check "sanitize strips :: command marker"     "__set-output__" "$(printf '::set-output::' | sanitize_for_log)"
 check "sanitize strips control chars"         "ab"             "$(printf 'a\tb\r' | sanitize_for_log)"
+
+# A byte that is not valid UTF-8 (here a Latin-1 filename) must not make the sanitiser FAIL. BSD tr
+# exits 1 with "Illegal byte sequence" outside the C locale, and under `set -euo pipefail` that
+# propagates out of the call sites' command substitutions and kills the whole gate — turning a
+# cosmetic logging step into a failed run on exactly the macOS self-hosted runners this script
+# supports. Both tr stages therefore pin LC_ALL=C. Asserted on the EXIT STATUS, because the
+# surviving byte is irrelevant; not aborting is the contract.
+check "sanitize survives an invalid UTF-8 byte" "0" \
+  "$(set -euo pipefail; v="$(printf 'agp\xff.yml' | sanitize_for_log)"; printf '%s' "${v}" >/dev/null; echo $?)"
+# ...and still defangs the things it exists to defang when such a byte is present.
+check "sanitize defangs ':' beside an invalid byte" "a_b" "$(printf 'a\xff:b' | sanitize_for_log | LC_ALL=C tr -d '\377')"
 
 # --- portability guard: no GNU-only coreutils flags (self-hosted runners may be BSD/macOS) ---
 # `realpath -m` and `mv -T`/`mv -fT` are GNU-only and silently break on macOS, where they
