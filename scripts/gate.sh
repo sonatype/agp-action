@@ -185,6 +185,19 @@ validate_config_path() {
       echo "::error::agp-gate: config-path must not contain '..' path segments (got '${path}')." >&2
       return 1
     fi
+    # A '.git' segment is inside the workspace, so the containment check accepts it, yet it aims the
+    # write at git's own administrative directory. Two ways that bites: '.git/config' replaces the
+    # repository's config with YAML and breaks the repo outright, and '.git/anything' makes
+    # `rev-parse --show-prefix` return EMPTY (the git dir is not in the work tree), so the exclude
+    # pattern collapses from '/.git/src' to '/src' and hides everything under the real top-level
+    # src/ from `git status --porcelain` — the dirty-tree bypass the control-character check above
+    # exists to prevent. Case-insensitively, because APFS/NTFS would accept '.GIT' for the same
+    # directory. Nothing legitimate writes a governed config in there.
+    case "$(printf '%s' "${seg}" | LC_ALL=C tr '[:upper:]' '[:lower:]')" in
+      .git)
+        echo "::error::agp-gate: config-path must not contain a '.git' path segment (got '$(printf '%s' "${path}" | sanitize_for_log)')." >&2
+        return 1 ;;
+    esac
     case "${rest}" in
       */*) rest="${rest#*/}" ;;
       *)   break ;;
@@ -233,7 +246,7 @@ is_inside_workspace() {
 exclude_config_from_git() {
   local dir="${1:-}" name="${2:-}" workspace="${3:-}"
   local git_common_dir gitdir show_prefix in_repo_path pattern line exclude_file toplevel
-  local tracked_pathspec
+  local tracked_pathspec path_cmd
   local dir_log name_log path_log file_log ws_log top_log
   # One-line provenance note so a human reading .git/info/exclude knows where the entry came from.
   local marker="# Sonatype Guide (agp-action gate): the config below is governed centrally in Guide and re-fetched every run — kept out of git on purpose."
@@ -259,6 +272,15 @@ exclude_config_from_git() {
   name_log="$(printf '%s' "${name}" | sanitize_for_log)"
   if ! command -v git >/dev/null 2>&1; then
     echo "::warning::agp-gate: git is not on PATH; could not mark '${name_log}' as git-excluded, so it may appear as an uncommitted change." >&2
+    return 0
+  fi
+
+  # Defence in depth for the same hazard validate_config_path rejects by segment: if we are ever
+  # reached with a directory inside git's administrative area, `--show-prefix` is empty and the
+  # pattern would be computed against the wrong root. Refuse rather than write a pattern that hides
+  # unrelated paths.
+  if [ "$(git -C "${dir}" rev-parse --is-inside-git-dir 2>/dev/null || true)" = "true" ]; then
+    echo "::warning::agp-gate: '${dir_log}' is inside the git directory; skipping git-exclude bookkeeping for '${name_log}'." >&2
     return 0
   fi
 
@@ -356,7 +378,13 @@ exclude_config_from_git() {
     tracked_pathspec=":(literal)${name}"
   fi
   if git -C "${dir}" ls-files --error-unmatch -- "${tracked_pathspec}" >/dev/null 2>&1; then
-    echo "::warning::agp-gate: '${path_log}' is committed to this repository, so it will still show up as a modified file. Configuration is now governed centrally in Sonatype Guide and re-fetched on every run: untrack the committed copy ('git rm --cached ${path_log}' then commit) so it stops conflicting with the governed config." >&2
+    # The suggested command has to survive being pasted verbatim. `--` stops a path starting with '-'
+    # being read as a switch ("error: unknown switch"), and %q quotes whatever else needs it, so a
+    # path containing a space is one pathspec rather than two ("fatal: pathspec 'my' did not match").
+    # %q is quoted for the SHELL; path_log is separately sanitised for the LOG, and both matter here
+    # because the text is a workflow-command line the user is meant to copy out of.
+    path_cmd="$(printf '%q' "${path_log}")"
+    echo "::warning::agp-gate: '${path_log}' is committed to this repository, so it will still show up as a modified file. Configuration is now governed centrally in Sonatype Guide and re-fetched on every run: untrack the committed copy ('git rm --cached -- ${path_cmd}' then commit) so it stops conflicting with the governed config." >&2
   fi
 
   exclude_file="${gitdir}/info/exclude"

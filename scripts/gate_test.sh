@@ -266,6 +266,50 @@ check "control char in name: nothing written"  "reject"   "$(grep_line "${repo_c
 check "control char in name: real change stays visible" "?? agp.yml
 ?? src/" "$(git -C "${repo_ctl}" status --porcelain)"
 
+# A '.git' segment is inside the workspace, so the containment check accepts it, but it aims the write
+# at git's own administrative directory. '.git/config' would replace the repo's config with YAML;
+# '.git/<anything>' makes --show-prefix return EMPTY, so the pattern collapses from '/.git/src' to
+# '/src' and hides everything under the real top-level src/ — the same dirty-tree bypass the
+# control-character check prevents, reached by a different route.
+check "'.git/src' rejected"                    "__EXIT_NONZERO__" "$(validate_config_path '.git/src' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+check "'.git/config' rejected"                 "__EXIT_NONZERO__" "$(validate_config_path '.git/config' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+check "'.GIT/src' rejected (case-insensitive)" "__EXIT_NONZERO__" "$(validate_config_path '.GIT/src' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+check "nested 'a/.git/b' rejected"             "__EXIT_NONZERO__" "$(validate_config_path 'a/.git/b' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+# ...and names that merely START with .git are legitimate and must still be accepted.
+check "'.gitignore' still accepted"            "ok" "$(validate_config_path '.gitignore' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+check "'.github/agp.yml' still accepted"       "ok" "$(validate_config_path '.github/agp.yml' >/dev/null 2>&1 && echo ok || echo __EXIT_NONZERO__)"
+
+# Defence in depth: reached with a git-dir path anyway, the function must write nothing rather than
+# compute a pattern against the wrong root.
+repo_gd="$(new_repo gitdir)"
+mkdir -p "${repo_gd}/src"
+: > "${repo_gd}/src/app.js"
+git -C "${repo_gd}" add -A
+git -C "${repo_gd}" -c commit.gpgsign=false commit -qm init
+gd_real="$(cd "${repo_gd}/.git" && pwd -P)"
+gd_ws="$(cd "${repo_gd}" && pwd -P)"
+check "git-dir path: returns 0"          "0"        "$(exclude_config_from_git "${gd_real}" "src" "${gd_ws}" >/dev/null 2>&1; echo $?)"
+check "git-dir path: nothing written"    "reject"   "$(grep_line "${repo_gd}/.git/info/exclude" '/src')"
+: > "${repo_gd}/src/leftover.js"
+check "git-dir path: leftovers stay visible" "?? src/leftover.js" "$(git -C "${repo_gd}" status --porcelain)"
+
+# The suggested untrack command must survive being pasted verbatim: '--' so a leading '-' is not read
+# as a switch, and %q quoting so a space does not split it into two pathspecs.
+repo_dash="$(new_repo dashname)"
+: > "${repo_dash}/-weird.yml"
+git -C "${repo_dash}" add -A
+git -C "${repo_dash}" -c commit.gpgsign=false commit -qm init
+dash_ws="$(cd "${repo_dash}" && pwd -P)"
+check "untrack hint uses '--'" "found" \
+  "$(exclude_config_from_git "${dash_ws}" "-weird.yml" "${dash_ws}" 2>&1 >/dev/null | grep -q 'git rm --cached -- ' && echo found || echo missing)"
+repo_space="$(new_repo spacename)"
+: > "${repo_space}/my config.yml"
+git -C "${repo_space}" add -A
+git -C "${repo_space}" -c commit.gpgsign=false commit -qm init
+space_ws="$(cd "${repo_space}" && pwd -P)"
+check "untrack hint escapes a space" "escaped" \
+  "$(exclude_config_from_git "${space_ws}" "my config.yml" "${space_ws}" 2>&1 >/dev/null | grep -q 'my\\ config.yml' && echo escaped || echo raw)"
+
 # A committed config must be reported even when the configured case differs from the committed case.
 # On a case-insensitive filesystem (macOS APFS, Windows) git sets core.ignorecase=true and the index
 # keeps the committed spelling, so a byte-exact `:(literal)` pathspec misses — leaving the gate

@@ -244,6 +244,21 @@ validate_config_path() {
     echo "::error::resolve-bedrock-role: config-path must not be empty." >&2
     return 1
   fi
+  # Mirrors gate.sh's validate_config_path, which rejects these for concrete reasons: a newline lets
+  # one config-path smuggle extra patterns into the .git/info/exclude entry the gate writes, and a
+  # '.git' segment aims the write at git's administrative directory (breaking the repo, or collapsing
+  # the exclude pattern so it hides unrelated paths). Neither is exploitable from here — this script
+  # only READS the file — but the two actions are documented to agree on what a legitimate
+  # config-path is, and the looser of two postures is the one that gets treated as the contract.
+  #
+  # The offending value is deliberately NOT echoed: it is control characters by definition, and this
+  # script has no log sanitiser, so printing it would add the very workflow-command injection surface
+  # gate.sh guards against.
+  case "${path}" in
+    *[[:cntrl:]]*)
+      echo "::error::resolve-bedrock-role: config-path must not contain control characters." >&2
+      return 1 ;;
+  esac
   case "${path}" in
     /*)
       echo "::error::resolve-bedrock-role: config-path must be a relative path within the" \
@@ -258,6 +273,12 @@ validate_config_path() {
         "(got '${path}')." >&2
       return 1
     fi
+    case "$(printf '%s' "${seg}" | LC_ALL=C tr '[:upper:]' '[:lower:]')" in
+      .git)
+        echo "::error::resolve-bedrock-role: config-path must not contain a '.git' path" \
+          "segment (got '${path}')." >&2
+        return 1 ;;
+    esac
     case "${rest}" in
       */*) rest="${rest#*/}" ;;
       *)   break ;;
