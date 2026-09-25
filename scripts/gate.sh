@@ -42,8 +42,16 @@ _gate_cleanup() {
 # Filter stdin for safe inclusion in a workflow log line: strip control characters and
 # replace ':' so a hostile or garbled response body cannot inject GitHub Actions workflow
 # commands (which require the '::' marker) into the runner's stdout parser.
+#
+# LC_ALL=C on BOTH stages, not just the first. A prefix binds only to the command it precedes, so
+# the second tr would otherwise run in the ambient locale, where BSD tr (macOS self-hosted runners)
+# exits 1 with "Illegal byte sequence" on any byte that is not valid UTF-8 — a Latin-1 filename is
+# enough. Under `set -euo pipefail` that failure propagates out of the command substitutions at the
+# call sites and aborts the whole gate, which would turn a cosmetic log-sanitising step into a
+# failed run. Byte-wise C locale also makes the filtering itself deterministic regardless of the
+# runner's locale.
 sanitize_for_log() {
-  LC_ALL=C tr -d '[:cntrl:]' | tr ':' '_'
+  LC_ALL=C tr -d '[:cntrl:]' | LC_ALL=C tr ':' '_'
 }
 
 # normalize_directive <header-count> <raw-value>
@@ -223,9 +231,10 @@ is_inside_workspace() {
 # 0, so the gate keeps working where this cannot be done. The script runs under
 # `set -euo pipefail`, so every git call is guarded with `|| { warn; return 0; }`.
 exclude_config_from_git() {
-  local dir="${1:-}" name="${2:-}"
-  local git_common_dir gitdir show_prefix in_repo_path pattern line exclude_file
-  local dir_log name_log path_log file_log
+  local dir="${1:-}" name="${2:-}" workspace="${3:-}"
+  local git_common_dir gitdir show_prefix in_repo_path pattern line exclude_file toplevel
+  local tracked_pathspec
+  local dir_log name_log path_log file_log ws_log top_log
   # One-line provenance note so a human reading .git/info/exclude knows where the entry came from.
   local marker="# Sonatype Guide (agp-action gate): the config below is governed centrally in Guide and re-fetched every run — kept out of git on purpose."
 
@@ -290,6 +299,31 @@ exclude_config_from_git() {
   in_repo_path="${show_prefix}${name}"
   path_log="$(printf '%s' "${in_repo_path}" | sanitize_for_log)"
 
+  # `git rev-parse` walks UPWARDS until it finds a repository. If GITHUB_WORKSPACE is not itself a
+  # repository root — e.g. `actions/checkout` with `path:`, which puts the real checkout in a
+  # subdirectory — but some ANCESTOR directory happens to be one, every lookup above resolved
+  # against that ancestor instead. The entry would then be written into the ancestor's exclude,
+  # prefixed with the workspace's path relative to it, and the checkout AGP actually runs against
+  # would never be touched: a silent no-op, and the dirty-worktree abort this exists to prevent
+  # would still fire. Say so instead, and write nothing. Skipped when no workspace was passed.
+  if [ -n "${workspace}" ]; then
+    # Both sides are resolved with `pwd -P` before comparing. `--show-toplevel` returns a
+    # symlink-resolved path, while GITHUB_WORKSPACE need not be one (on macOS /var is a symlink to
+    # /private/var, so an unresolved workspace differs from the toplevel for the SAME directory) —
+    # comparing the raw strings would warn and skip on every macOS run.
+    toplevel="$(git -C "${dir}" rev-parse --show-toplevel 2>/dev/null)" || toplevel=""
+    if [ -n "${toplevel}" ]; then
+      toplevel="$(cd "${toplevel}" 2>/dev/null && pwd -P)" || toplevel=""
+    fi
+    workspace="$(cd "${workspace}" 2>/dev/null && pwd -P)" || workspace=""
+    if [ -n "${toplevel}" ] && [ -n "${workspace}" ] && [ "${toplevel}" != "${workspace}" ]; then
+      ws_log="$(printf '%s' "${workspace}" | sanitize_for_log)"
+      top_log="$(printf '%s' "${toplevel}" | sanitize_for_log)"
+      echo "::warning::agp-gate: the git repository containing '${path_log}' is '${top_log}', not the workspace '${ws_log}' — the workspace is not a repository root, so a git-exclude entry would land in the wrong repository and do nothing. Skipping it; '${path_log}' may appear as an uncommitted change." >&2
+      return 0
+    fi
+  fi
+
   # Escape gitignore metacharacters so a legal-but-odd filename cannot turn into a glob. Backslash
   # FIRST, otherwise the backslashes added by the later substitutions would be escaped too.
   pattern="${in_repo_path//\\/\\\\}"
@@ -310,7 +344,18 @@ exclude_config_from_git() {
   # " M agp.yml" and keep tripping the CLI's pre-flight guard. Say so plainly rather than leaving a
   # silently ineffective exclude entry. The exclude line is still written (harmless now, correct
   # once untracked). Never mutate the customer's index or history from here.
-  if git -C "${dir}" ls-files --error-unmatch -- ":(literal)${name}" >/dev/null 2>&1; then
+  # `:(literal)` is byte-exact, which is right on a case-SENSITIVE filesystem. On macOS APFS and on
+  # Windows, git sets core.ignorecase=true and the index holds whatever case was committed, so a
+  # config-path of 'AGP.yml' against a committed 'agp.yml' would NOT match: the warning below would
+  # stay silent in exactly the case it exists to diagnose, the gate would overwrite the tracked file,
+  # and the run would abort on " M agp.yml" with nothing explaining why. Add `:(icase)` there, and
+  # only there, so the byte-exact check is kept wherever the filesystem really is case-sensitive.
+  if [ "$(git -C "${dir}" config --get core.ignorecase 2>/dev/null || true)" = "true" ]; then
+    tracked_pathspec=":(literal,icase)${name}"
+  else
+    tracked_pathspec=":(literal)${name}"
+  fi
+  if git -C "${dir}" ls-files --error-unmatch -- "${tracked_pathspec}" >/dev/null 2>&1; then
     echo "::warning::agp-gate: '${path_log}' is committed to this repository, so it will still show up as a modified file. Configuration is now governed centrally in Sonatype Guide and re-fetched on every run: untrack the committed copy ('git rm --cached ${path_log}' then commit) so it stops conflicting with the governed config." >&2
   fi
 
@@ -473,7 +518,7 @@ main() {
   # git (or a concurrently running `git status`) could observe it as an untracked change — the
   # failure mode this guards against. Only reached on the success path: a fail-closed gate must not
   # touch the customer's repository state at all. Best-effort; it never fails the gate.
-  exclude_config_from_git "${config_dir_real}" "$(basename "${CONFIG_PATH}")"
+  exclude_config_from_git "${config_dir_real}" "$(basename "${CONFIG_PATH}")" "${workspace_root}"
 
   _GATE_DEST_TMP="$(mktemp "${config_dir_real}/.agp-gate-config.XXXXXX")"
   cp "${_GATE_STAGING_TMP}" "${_GATE_DEST_TMP}"

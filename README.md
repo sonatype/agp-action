@@ -712,9 +712,22 @@ git rm --cached agp.yml && git commit -m "Untrack agp.yml (governed centrally in
 Do **not** use `git update-index --assume-unchanged agp.yml`: it fails with
 `fatal: Unable to mark file agp.yml` whenever the file is not already tracked.
 
-One other thing can defeat the exclusion: a **negation** in the repository's own `.gitignore`
-(`!agp.yml`, or a broad `!*.yml`) re-includes the file and overrides `.git/info/exclude`, so
-`git status` keeps reporting `?? agp.yml`. Drop that negation (or narrow it) if you hit this.
+Three other things can defeat the exclusion:
+
+- A **negation** in the repository's own `.gitignore` (`!agp.yml`, or a broad `!*.yml`) re-includes
+  the file and overrides `.git/info/exclude`, so `git status` keeps reporting `?? agp.yml`. Drop that
+  negation, or narrow it.
+- A checkout whose **workspace is not the repository root** — `actions/checkout` with `path:`, or a
+  self-hosted work directory nested inside another repository. `git` resolves upwards, so the entry
+  would land in the wrong repository; the gate detects this, warns, and writes nothing rather than
+  leaving a silently ineffective entry.
+- `git clean -fdx` (note the `-x`) deletes ignored *and* excluded files, so a cleanup step using it
+  removes the governed config mid-job. Plain `git clean -fd` leaves it alone.
+
+On a long-lived checkout with **linked worktrees**, note that `.git/info/exclude` is shared across
+all of them by design — that is what makes the exclusion effective at all, since a per-worktree
+exclude file is ignored by git. The pattern therefore also hides `agp.yml` in sibling worktrees where
+the gate never ran.
 
 ### Verbose Logging
 

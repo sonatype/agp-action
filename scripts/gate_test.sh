@@ -266,6 +266,66 @@ check "control char in name: nothing written"  "reject"   "$(grep_line "${repo_c
 check "control char in name: real change stays visible" "?? agp.yml
 ?? src/" "$(git -C "${repo_ctl}" status --porcelain)"
 
+# A committed config must be reported even when the configured case differs from the committed case.
+# On a case-insensitive filesystem (macOS APFS, Windows) git sets core.ignorecase=true and the index
+# keeps the committed spelling, so a byte-exact `:(literal)` pathspec misses — leaving the gate
+# silent in the one case the warning exists for, and the run aborting on " M agp.yml" unexplained.
+# Only meaningful where the filesystem really is case-insensitive; skipped elsewhere so the suite
+# stays honest on Linux CI.
+icase_repo="$(new_repo icase)"
+: > "${icase_repo}/agp.yml"
+git -C "${icase_repo}" add agp.yml
+git -C "${icase_repo}" -c commit.gpgsign=false commit -qm "commit the config"
+if [ "$(git -C "${icase_repo}" config --get core.ignorecase 2>/dev/null || true)" = "true" ]; then
+  check "tracked config, different case: warns" "warned" \
+    "$(exclude_config_from_git "${icase_repo}" "AGP.yml" "${icase_repo}" 2>&1 >/dev/null | grep -q 'is committed to this repository' && echo warned || echo silent)"
+else
+  check "tracked config, different case: warns (skipped, case-sensitive FS)" "skip" "skip"
+fi
+# The exact-case form must warn on every filesystem.
+check "tracked config, exact case: warns" "warned" \
+  "$(exclude_config_from_git "${icase_repo}" "agp.yml" "${icase_repo}" 2>&1 >/dev/null | grep -q 'is committed to this repository' && echo warned || echo silent)"
+# ...and an untracked config must NOT warn, whatever the filesystem.
+untracked_repo="$(new_repo untracked)"
+: > "${untracked_repo}/agp.yml"
+check "untracked config: no committed-file warning" "silent" \
+  "$(exclude_config_from_git "${untracked_repo}" "agp.yml" "${untracked_repo}" 2>&1 >/dev/null | grep -q 'is committed to this repository' && echo warned || echo silent)"
+
+# The workspace is NOT a repository root but an ANCESTOR is one (actions/checkout with `path:`, or a
+# self-hosted work dir nested inside someone's repo). git rev-parse walks upwards and finds the
+# ancestor, so without the workspace check the entry lands in the WRONG repository: a silent no-op
+# that leaves the real checkout dirty and still aborts the run.
+anc="${tmp}/ancestor"
+mkdir -p "${anc}/work/myrepo/src"
+git -C "${anc}" init -q
+git -C "${anc}" config user.email t@t
+git -C "${anc}" config user.name t
+: > "${anc}/root.txt"
+git -C "${anc}" add -A
+git -C "${anc}" -c commit.gpgsign=false commit -qm init
+git -C "${anc}/work/myrepo/src" init -q
+anc_ws="$(cd "${anc}/work/myrepo" && pwd -P)"
+: > "${anc_ws}/agp.yml"
+check "workspace not a repo root: returns 0"    "0"      "$(exclude_config_from_git "${anc_ws}" "agp.yml" "${anc_ws}" >/dev/null 2>&1; echo $?)"
+check "workspace not a repo root: warns"        "warned" "$(exclude_config_from_git "${anc_ws}" "agp.yml" "${anc_ws}" 2>&1 >/dev/null | grep -q 'not the workspace' && echo warned || echo silent)"
+check "workspace not a repo root: ancestor untouched" "reject" "$(grep_line "${anc}/.git/info/exclude" '/work/myrepo/agp.yml')"
+
+# The control: a config in a SUBDIRECTORY of the workspace is the same repository, so it must still
+# be excluded — the check must not fire merely because the config is not at the root.
+sub_ws="${tmp}/subws"
+mkdir -p "${sub_ws}/ci"
+git -C "${sub_ws}" init -q
+git -C "${sub_ws}" config user.email t@t
+git -C "${sub_ws}" config user.name t
+: > "${sub_ws}/keep.txt"
+git -C "${sub_ws}" add -A
+git -C "${sub_ws}" -c commit.gpgsign=false commit -qm init
+sub_real="$(cd "${sub_ws}" && pwd -P)"
+: > "${sub_real}/ci/agp.yml"
+exclude_config_from_git "${sub_real}/ci" "agp.yml" "${sub_real}" >/dev/null 2>&1
+check "config in a subdir of the workspace: still excluded" "accept" "$(grep_line "${sub_real}/.git/info/exclude" '/ci/agp.yml')"
+check "config in a subdir of the workspace: status clean"   ""            "$(git -C "${sub_real}" status --porcelain)"
+
 # Not a git repository at all: best-effort means warn and return 0, never abort the gate.
 plain_dir="${tmp}/not-a-repo"
 mkdir -p "${plain_dir}"
@@ -275,6 +335,17 @@ check "missing arguments: returns 0"           "0"        "$(exclude_config_from
 # --- log sanitiser defangs control chars and '::' workflow-command markers ---
 check "sanitize strips :: command marker"     "__set-output__" "$(printf '::set-output::' | sanitize_for_log)"
 check "sanitize strips control chars"         "ab"             "$(printf 'a\tb\r' | sanitize_for_log)"
+
+# A byte that is not valid UTF-8 (here a Latin-1 filename) must not make the sanitiser FAIL. BSD tr
+# exits 1 with "Illegal byte sequence" outside the C locale, and under `set -euo pipefail` that
+# propagates out of the call sites' command substitutions and kills the whole gate — turning a
+# cosmetic logging step into a failed run on exactly the macOS self-hosted runners this script
+# supports. Both tr stages therefore pin LC_ALL=C. Asserted on the EXIT STATUS, because the
+# surviving byte is irrelevant; not aborting is the contract.
+check "sanitize survives an invalid UTF-8 byte" "0" \
+  "$(set -euo pipefail; v="$(printf 'agp\xff.yml' | sanitize_for_log)"; printf '%s' "${v}" >/dev/null; echo $?)"
+# ...and still defangs the things it exists to defang when such a byte is present.
+check "sanitize defangs ':' beside an invalid byte" "a_b" "$(printf 'a\xff:b' | sanitize_for_log | LC_ALL=C tr -d '\377')"
 
 # --- portability guard: no GNU-only coreutils flags (self-hosted runners may be BSD/macOS) ---
 # `realpath -m` and `mv -T`/`mv -fT` are GNU-only and silently break on macOS, where they
