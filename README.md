@@ -44,6 +44,10 @@ GitHub App installation access token, scoped to the current repository with
 `sonatype-guide[bot]` with the green Verified badge. No PATs or long-lived
 secrets required.
 
+When the broker mints the token with a different GitHub App (a self-hosted
+broker configured with your own App), commits are authored and committed as
+that App's bot, which the broker names in its response.
+
 Prerequisites:
 
 1. Install the [Sonatype Guide GitHub App](https://github.com/apps/sonatype-guide) on the target repository.
@@ -135,8 +139,8 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `config-path` | No | `agp.yml` | Path to the effective `agp.yml` written by the gate action. Read to resolve the governed Bedrock role (`agent.awsRole`). |
 | `verbose` | No | `false` | Enable verbose output (may expose sensitive data in logs) |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
-| `git-user-name` | No | `sonatype-guide[bot]` when broker is used, otherwise `AGP Bot` | Git user name for commits. |
-| `git-user-email` | No | `<user-id>+sonatype-guide[bot]@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
+| `git-user-name` | No | The minting App's bot (`sonatype-guide[bot]` for Sonatype's) when broker is used, otherwise `AGP Bot` | Git user name for commits. |
+| `git-user-email` | No | `<user-id>+<bot-login>@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
 
 ## Security
 

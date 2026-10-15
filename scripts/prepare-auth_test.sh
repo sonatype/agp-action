@@ -4,7 +4,7 @@
 # Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
 # "Sonatype" is a trademark of Sonatype, Inc.
 #
-# prepare-auth_test.sh — unit tests for the classified-error parsing block in
+# prepare-auth_test.sh — unit tests for the classified-error parsing and commit identity blocks in
 # scripts/prepare-auth.sh. prepare-auth.sh runs top-level side effects on source (curl calls,
 # stdin reads, exit), so instead of sourcing it we extract the classification block into a
 # helper and drive it with fixtures. The helper's contract must stay in lock-step with the
@@ -99,6 +99,83 @@ prepare_auth_extraction_present() {
 check "prepare-auth.sh uses the tested extraction pattern" \
   "match" \
   "$(if prepare_auth_extraction_present; then echo match; else echo drift; fi)"
+
+# Mirrors Step 3 of the broker branch in prepare-auth.sh. Prints name|email|auth-source.
+broker_identity() {
+  local RESP_BODY="$1" GIT_NAME="$2" GIT_EMAIL="$3"
+  local ACTOR_LOGIN ACTOR_ID AUTH_SOURCE
+  ACTOR_LOGIN=$(jq -r '.actor.login // empty' "$RESP_BODY" 2>/dev/null || true)
+  ACTOR_ID=$(jq -r '.actor.id // empty' "$RESP_BODY" 2>/dev/null || true)
+  if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then
+    ACTOR_LOGIN="sonatype-guide[bot]"
+    ACTOR_ID="262430933"
+  fi
+  AUTH_SOURCE="$ACTOR_LOGIN via OIDC broker"
+  if [ -z "$GIT_NAME" ]; then
+    GIT_NAME="$ACTOR_LOGIN"
+  fi
+  if [ -z "$GIT_EMAIL" ]; then
+    GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"
+  fi
+  printf '%s|%s|%s\n' "$GIT_NAME" "$GIT_EMAIL" "$AUTH_SOURCE"
+}
+
+identity_fixture() {
+  local body="$1" name="${2:-}" email="${3:-}"
+  local tmp
+  tmp=$(mktemp)
+  printf '%s' "${body}" >"${tmp}"
+  broker_identity "${tmp}" "${name}" "${email}"
+  rm -f "${tmp}"
+}
+
+GUIDE_IDENTITY='sonatype-guide[bot]|262430933+sonatype-guide[bot]@users.noreply.github.com|sonatype-guide[bot] via OIDC broker'
+
+check "another App's actor names that App's bot" \
+  'acme-agentp[bot]|424242+acme-agentp[bot]@users.noreply.github.com|acme-agentp[bot] via OIDC broker' \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":424242}}')"
+
+check "no actor keeps sonatype-guide[bot]" \
+  "${GUIDE_IDENTITY}" \
+  "$(identity_fixture '{"token":"ghs_x","expires_at":"2026-05-01T13:00:00Z"}')"
+
+check "actor without an id keeps sonatype-guide[bot]" \
+  "${GUIDE_IDENTITY}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]"}}')"
+
+check "actor whose login is not a bot keeps sonatype-guide[bot]" \
+  "${GUIDE_IDENTITY}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"octocat","id":1}}')"
+
+check "actor login with injected characters keeps sonatype-guide[bot]" \
+  "${GUIDE_IDENTITY}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"evil[bot]\nGIT_NAME=x","id":1}}')"
+
+check "non-numeric actor id keeps sonatype-guide[bot]" \
+  "${GUIDE_IDENTITY}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":"12a"}}')"
+
+check "set inputs override the actor" \
+  'MyCompany Bot|bot@mycompany.com|acme-agentp[bot] via OIDC broker' \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":424242}}' 'MyCompany Bot' 'bot@mycompany.com')"
+
+check "a set name alone keeps the actor's e-mail" \
+  'MyCompany Bot|424242+acme-agentp[bot]@users.noreply.github.com|acme-agentp[bot] via OIDC broker' \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":424242}}' 'MyCompany Bot')"
+
+# shellcheck disable=SC2016
+prepare_auth_identity_present() {
+  local script="${SCRIPT_DIR}/prepare-auth.sh"
+  grep -Fq "ACTOR_LOGIN=\$(jq -r '.actor.login // empty' \"\$RESP_BODY\" 2>/dev/null || true)" "${script}" \
+    && grep -Fq "ACTOR_ID=\$(jq -r '.actor.id // empty' \"\$RESP_BODY\" 2>/dev/null || true)" "${script}" \
+    && grep -Fq 'if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then' "${script}" \
+    && grep -Fq 'AUTH_SOURCE="$ACTOR_LOGIN via OIDC broker"' "${script}" \
+    && grep -Fq 'GIT_NAME="$ACTOR_LOGIN"' "${script}" \
+    && grep -Fq 'GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"' "${script}"
+}
+check "prepare-auth.sh uses the tested commit identity block" \
+  "match" \
+  "$(if prepare_auth_identity_present; then echo match; else echo drift; fi)"
 
 if [ "${fail}" -ne 0 ]; then
   echo "prepare-auth_test: FAILURES"

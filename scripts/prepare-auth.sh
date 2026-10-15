@@ -120,23 +120,22 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
     exit 1
   fi
   echo "::add-mask::$TOKEN"
-  AUTH_SOURCE="sonatype-guide[bot] via OIDC broker"
 
-  # Step 3: default commit identity to sonatype-guide[bot] when the broker
-  # minted the token. The numeric user ID is required so GitHub shows the
-  # 'Verified · by sonatype-guide[bot]' badge on commits (this is the
-  # documented formula from GitHub's actions/create-github-app-token README).
-  #
-  # The bot's numeric user ID is immutable for the app's lifetime, so it is hardcoded
-  # rather than resolved with a live, unauthenticated api.github.com call on every run
-  # (that lookup counts against the 60/hour/IP unauthenticated rate limit shared across
-  # all workflows on a hosted-runner egress IP). Source of truth:
-  #   GET https://api.github.com/users/sonatype-guide[bot] -> .id   (262430933)
+  # Step 3: default commit identity to the bot of the App that minted the token, which
+  # the broker names in `actor`. Brokers that omit it are Sonatype's own App, whose
+  # bot id is fixed: GET https://api.github.com/users/sonatype-guide[bot] -> .id
+  ACTOR_LOGIN=$(jq -r '.actor.login // empty' "$RESP_BODY" 2>/dev/null || true)
+  ACTOR_ID=$(jq -r '.actor.id // empty' "$RESP_BODY" 2>/dev/null || true)
+  if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then
+    ACTOR_LOGIN="sonatype-guide[bot]"
+    ACTOR_ID="262430933"
+  fi
+  AUTH_SOURCE="$ACTOR_LOGIN via OIDC broker"
   if [ -z "$GIT_NAME" ]; then
-    GIT_NAME="sonatype-guide[bot]"
+    GIT_NAME="$ACTOR_LOGIN"
   fi
   if [ -z "$GIT_EMAIL" ]; then
-    GIT_EMAIL="262430933+sonatype-guide[bot]@users.noreply.github.com"
+    GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"
   fi
 
 elif [ -n "${GITHUB_TOKEN:-}" ]; then
