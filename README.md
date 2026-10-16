@@ -138,7 +138,7 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `mount-docker-socket` | No | `false` | Bind-mount the host Docker socket into the AGP container to enable container-based tools (Testcontainers, Docker Compose) during setup and validation. **Container-escape risk — see [Security](#security).** |
 | `config-path` | No | `agp.yml` | Path to the effective `agp.yml` written by the gate action. Read to resolve the governed Bedrock role (`agent.awsRole`). |
 | `verbose` | No | `false` | Enable verbose output (may expose sensitive data in logs) |
-| `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
+| `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as the minting App's bot (`sonatype-guide[bot]` for Sonatype's). |
 | `git-user-name` | No | The minting App's bot (`sonatype-guide[bot]` for Sonatype's) when broker is used, otherwise `AGP Bot` | Git user name for commits. |
 | `git-user-email` | No | `<user-id>+<bot-login>@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
 

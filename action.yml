@@ -90,15 +90,15 @@ inputs:
   # In that case PRs will be authored by whoever owns the supplied token.
   # --------------------------------------------------------------------------
   github-token:
-    description: "Override for the token used to push commits and open PRs. When unset, the action mints one from the Sonatype Guide OIDC broker so PRs open as sonatype-guide[bot]."
+    description: "Override for the token used to push commits and open PRs. When unset, the action mints one from the Sonatype Guide OIDC broker so PRs open as the minting App's bot (sonatype-guide[bot] for Sonatype's App)."
     required: false
     default: ""
   git-user-name:
-    description: "Git user name for commits. Leave blank to match the authenticating identity (sonatype-guide[bot] when the broker is used)."
+    description: "Git user name for commits. Leave blank to match the authenticating identity (the minting App's bot when the broker is used, sonatype-guide[bot] for Sonatype's App)."
     required: false
     default: ""
   git-user-email:
-    description: "Git user email for commits. Leave blank to match the authenticating identity — e.g. <user-id>+sonatype-guide[bot]@users.noreply.github.com, which is required for GitHub to show the Verified bot badge on commits."
+    description: "Git user email for commits. Leave blank to match the authenticating identity — e.g. <user-id>+<bot-login>@users.noreply.github.com, which is required for GitHub to show the Verified bot badge on commits."
     required: false
     default: ""
   # Docker image configuration
