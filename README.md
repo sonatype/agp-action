@@ -36,7 +36,7 @@ jobs:
           AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
 ```
 
-### Pull requests open as `sonatype-guide[bot]`
+### Pull requests open as `sonatype-guide[bot]` or your own App's bot
 
 By default the action exchanges the GitHub Actions OIDC JWT for a short-lived
 GitHub App installation access token, scoped to the current repository with

@@ -81,8 +81,8 @@ inputs:
   # By default the action mints a short-lived GitHub App installation access
   # token for the Sonatype Guide App via Sonatype Guide's OIDC token broker
   # (https://api.guide.sonatype.com/agp/installation-token). The resulting
-  # token produces PRs authored by sonatype-guide[bot] with the Verified bot
-  # badge on commits. The Sonatype Guide App must be installed on the target
+  # token produces PRs authored by the minting App's bot (sonatype-guide[bot]
+  # for Sonatype's App) with the Verified bot badge on commits. The Sonatype Guide App must be installed on the target
   # repository, and the job must declare `permissions: id-token: write`.
   #
   # To opt out of the broker (air-gapped runners, GHES without OIDC, CI
@@ -173,8 +173,8 @@ runs:
     # Default path: exchange the GitHub Actions OIDC JWT for a short-lived
     # GitHub App installation token via Sonatype Guide's broker. The token is
     # scoped to the current repo with contents:write + pull_requests:write
-    # and produces PRs authored by sonatype-guide[bot] with the Verified bot
-    # badge on commits. Requires `permissions: id-token: write` on the job.
+    # and produces PRs authored by the minting App's bot (sonatype-guide[bot]
+    # for Sonatype's App) with the Verified bot badge on commits. Requires `permissions: id-token: write` on the job.
     #
     # Override path: `github-token` input. Used for air-gapped runners, GHES
     # without OIDC federation, or local debugging. PRs in that case are

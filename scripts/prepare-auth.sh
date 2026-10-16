@@ -27,7 +27,7 @@
 #      `permissions: id-token: write` on the job and the Sonatype Guide App
 #      installed on the repo. Mints a GitHub App installation access token
 #      scoped to the repo with contents:write + pull_requests:write so PRs
-#      open as sonatype-guide[bot].
+#      open as the minting App's bot (sonatype-guide[bot] for Sonatype's App).
 #
 #   3. $GITHUB_TOKEN — legacy backward-compat path. Workflow exported the
 #      token the old way (pre-OIDC). Emits a deprecation warning and keeps
@@ -121,12 +121,15 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
   fi
   echo "::add-mask::$TOKEN"
 
-  # Step 3: default commit identity to the bot of the App that minted the token, which
-  # the broker names in `actor`. Brokers that omit it are Sonatype's own App, whose
-  # bot id is fixed: GET https://api.github.com/users/sonatype-guide[bot] -> .id
+  # Step 3: default commit identity to the minting App's bot, which the broker names in
+  # `actor`. Without a valid one (older brokers, or a failed lookup) fall back to
+  # sonatype-guide[bot], whose id is fixed: GET https://api.github.com/users/sonatype-guide[bot] -> .id
   ACTOR_LOGIN=$(jq -r '.actor.login // empty' "$RESP_BODY" 2>/dev/null || true)
   ACTOR_ID=$(jq -r '.actor.id // empty' "$RESP_BODY" 2>/dev/null || true)
   if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then
+    if [ -n "$ACTOR_LOGIN$ACTOR_ID" ]; then
+      echo "::warning::Ignoring the broker's actor: it is not a bot login with a numeric id. Commits use sonatype-guide[bot]."
+    fi
     ACTOR_LOGIN="sonatype-guide[bot]"
     ACTOR_ID="262430933"
   fi

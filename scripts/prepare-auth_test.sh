@@ -107,6 +107,9 @@ broker_identity() {
   ACTOR_LOGIN=$(jq -r '.actor.login // empty' "$RESP_BODY" 2>/dev/null || true)
   ACTOR_ID=$(jq -r '.actor.id // empty' "$RESP_BODY" 2>/dev/null || true)
   if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then
+    if [ -n "$ACTOR_LOGIN$ACTOR_ID" ]; then
+      echo "::warning::Ignoring the broker's actor: it is not a bot login with a numeric id. Commits use sonatype-guide[bot]." >&2
+    fi
     ACTOR_LOGIN="sonatype-guide[bot]"
     ACTOR_ID="262430933"
   fi
@@ -125,7 +128,7 @@ identity_fixture() {
   local tmp
   tmp=$(mktemp)
   printf '%s' "${body}" >"${tmp}"
-  broker_identity "${tmp}" "${name}" "${email}"
+  broker_identity "${tmp}" "${name}" "${email}" 2>/dev/null
   rm -f "${tmp}"
 }
 
@@ -163,12 +166,32 @@ check "a set name alone keeps the actor's e-mail" \
   'MyCompany Bot|424242+acme-agentp[bot]@users.noreply.github.com|acme-agentp[bot] via OIDC broker' \
   "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":424242}}' 'MyCompany Bot')"
 
+identity_warning() {
+  local tmp
+  tmp=$(mktemp)
+  printf '%s' "$1" >"${tmp}"
+  { broker_identity "${tmp}" "" "" >/dev/null; } 2>&1
+  rm -f "${tmp}"
+}
+
+check "a rejected actor warns" \
+  "::warning::Ignoring the broker's actor: it is not a bot login with a numeric id. Commits use sonatype-guide[bot]." \
+  "$(identity_warning '{"token":"ghs_x","actor":{"login":"octocat","id":1}}')"
+
+check "no actor does not warn" \
+  "" \
+  "$(identity_warning '{"token":"ghs_x"}')"
+
 # shellcheck disable=SC2016
 prepare_auth_identity_present() {
   local script="${SCRIPT_DIR}/prepare-auth.sh"
   grep -Fq "ACTOR_LOGIN=\$(jq -r '.actor.login // empty' \"\$RESP_BODY\" 2>/dev/null || true)" "${script}" \
     && grep -Fq "ACTOR_ID=\$(jq -r '.actor.id // empty' \"\$RESP_BODY\" 2>/dev/null || true)" "${script}" \
     && grep -Fq 'if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then' "${script}" \
+    && grep -Fq 'if [ -n "$ACTOR_LOGIN$ACTOR_ID" ]; then' "${script}" \
+    && grep -Fq '::warning::Ignoring the broker'"'"'s actor: it is not a bot login with a numeric id.' "${script}" \
+    && grep -Fq '    ACTOR_LOGIN="sonatype-guide[bot]"' "${script}" \
+    && grep -Fq '    ACTOR_ID="262430933"' "${script}" \
     && grep -Fq 'AUTH_SOURCE="$ACTOR_LOGIN via OIDC broker"' "${script}" \
     && grep -Fq 'GIT_NAME="$ACTOR_LOGIN"' "${script}" \
     && grep -Fq 'GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"' "${script}"
