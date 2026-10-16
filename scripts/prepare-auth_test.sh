@@ -4,11 +4,10 @@
 # Includes the third-party code listed at http://links.sonatype.com/products/clm/attributions.
 # "Sonatype" is a trademark of Sonatype, Inc.
 #
-# prepare-auth_test.sh — unit tests for the classified-error parsing and commit identity blocks in
-# scripts/prepare-auth.sh. prepare-auth.sh runs top-level side effects on source (curl calls,
-# stdin reads, exit), so instead of sourcing it we extract the classification block into a
-# helper and drive it with fixtures. The helper's contract must stay in lock-step with the
-# corresponding block in prepare-auth.sh — a drift check below asserts that.
+# prepare-auth_test.sh — unit tests for scripts/prepare-auth.sh. prepare-auth.sh runs top-level
+# side effects on source (network calls, stdin reads, exit), so the classified-error parsing is
+# copied into a helper here with a drift check, and the commit identity is tested through
+# scripts/broker-identity.sh, which prepare-auth.sh sources.
 
 set -euo pipefail
 
@@ -100,105 +99,103 @@ check "prepare-auth.sh uses the tested extraction pattern" \
   "match" \
   "$(if prepare_auth_extraction_present; then echo match; else echo drift; fi)"
 
-# Mirrors Step 3 of the broker branch in prepare-auth.sh. Prints name|email|auth-source.
-broker_identity() {
-  local RESP_BODY="$1" GIT_NAME="$2" GIT_EMAIL="$3"
-  local ACTOR_LOGIN ACTOR_ID AUTH_SOURCE
-  ACTOR_LOGIN=$(jq -r '.actor.login // empty' "$RESP_BODY" 2>/dev/null || true)
-  ACTOR_ID=$(jq -r '.actor.id // empty' "$RESP_BODY" 2>/dev/null || true)
-  if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then
-    if [ -n "$ACTOR_LOGIN$ACTOR_ID" ]; then
-      echo "::warning::Ignoring the broker's actor: it is not a bot login with a numeric id. Commits use sonatype-guide[bot]." >&2
-    fi
-    ACTOR_LOGIN="sonatype-guide[bot]"
-    ACTOR_ID="262430933"
-  fi
-  AUTH_SOURCE="$ACTOR_LOGIN via OIDC broker"
-  if [ -z "$GIT_NAME" ]; then
-    GIT_NAME="$ACTOR_LOGIN"
-  fi
-  if [ -z "$GIT_EMAIL" ]; then
-    GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"
-  fi
-  printf '%s|%s|%s\n' "$GIT_NAME" "$GIT_EMAIL" "$AUTH_SOURCE"
-}
+# shellcheck source=scripts/broker-identity.sh
+source "${SCRIPT_DIR}/broker-identity.sh"
 
+# Runs the real identity resolution. Prints name|email|auth-source, then any annotations it printed.
 identity_fixture() {
-  local body="$1" name="${2:-}" email="${3:-}"
-  local tmp
+  local body="$1" GIT_NAME="${2:-}" GIT_EMAIL="${3:-}" api_url="${4:-${DEFAULT_BROKER_URL}}"
+  local tmp annotations ACTOR_LOGIN ACTOR_ID AUTH_SOURCE
   tmp=$(mktemp)
   printf '%s' "${body}" >"${tmp}"
-  broker_identity "${tmp}" "${name}" "${email}" 2>/dev/null
+  annotations=$(resolve_broker_identity "${tmp}" "${api_url}")
+  resolve_broker_identity "${tmp}" "${api_url}" >/dev/null
   rm -f "${tmp}"
+  printf '%s|%s|%s\n' "${GIT_NAME}" "${GIT_EMAIL}" "${AUTH_SOURCE}"
+  if [ -n "${annotations}" ]; then
+    printf '%s\n' "${annotations}"
+  fi
 }
 
+ACME='{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":424242}}'
+ACME_IDENTITY='acme-agentp[bot]|424242+acme-agentp[bot]@users.noreply.github.com|acme-agentp[bot] via OIDC broker'
 GUIDE_IDENTITY='sonatype-guide[bot]|262430933+sonatype-guide[bot]@users.noreply.github.com|sonatype-guide[bot] via OIDC broker'
+FALLBACK="; falling back to the sonatype-guide[bot] default identity."
 
 check "another App's actor names that App's bot" \
-  'acme-agentp[bot]|424242+acme-agentp[bot]@users.noreply.github.com|acme-agentp[bot] via OIDC broker' \
-  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":424242}}')"
+  "${ACME_IDENTITY}" \
+  "$(identity_fixture "${ACME}")"
 
-check "no actor keeps sonatype-guide[bot]" \
+check "a numeric-string actor id is accepted" \
+  "${ACME_IDENTITY}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":"424242"}}')"
+
+check "no actor keeps sonatype-guide[bot] without a warning" \
   "${GUIDE_IDENTITY}" \
   "$(identity_fixture '{"token":"ghs_x","expires_at":"2026-05-01T13:00:00Z"}')"
 
-check "actor without an id keeps sonatype-guide[bot]" \
+check "a null actor keeps sonatype-guide[bot] without a warning" \
   "${GUIDE_IDENTITY}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":null}')"
+
+check "an actor without an id falls back and says the id is the problem" \
+  "${GUIDE_IDENTITY}
+::warning::Ignoring the broker's actor because its id is not numeric${FALLBACK}" \
   "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]"}}')"
 
-check "actor whose login is not a bot keeps sonatype-guide[bot]" \
-  "${GUIDE_IDENTITY}" \
+check "a non-numeric actor id falls back and says the id is the problem" \
+  "${GUIDE_IDENTITY}
+::warning::Ignoring the broker's actor because its id is not numeric${FALLBACK}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":"12a"}}')"
+
+check "an actor whose login is not a bot falls back and says the login is the problem" \
+  "${GUIDE_IDENTITY}
+::warning::Ignoring the broker's actor because its login is not a GitHub bot login${FALLBACK}" \
   "$(identity_fixture '{"token":"ghs_x","actor":{"login":"octocat","id":1}}')"
 
-check "actor login with injected characters keeps sonatype-guide[bot]" \
-  "${GUIDE_IDENTITY}" \
+check "an actor login with injected characters falls back" \
+  "${GUIDE_IDENTITY}
+::warning::Ignoring the broker's actor because its login is not a GitHub bot login${FALLBACK}" \
   "$(identity_fixture '{"token":"ghs_x","actor":{"login":"evil[bot]\nGIT_NAME=x","id":1}}')"
 
-check "non-numeric actor id keeps sonatype-guide[bot]" \
-  "${GUIDE_IDENTITY}" \
-  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":"12a"}}')"
+check "an actor that is not an object falls back with a warning" \
+  "${GUIDE_IDENTITY}
+::warning::Ignoring the broker's actor because it is not an object${FALLBACK}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":"acme-agentp[bot]"}')"
 
 check "set inputs override the actor" \
   'MyCompany Bot|bot@mycompany.com|acme-agentp[bot] via OIDC broker' \
-  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":424242}}' 'MyCompany Bot' 'bot@mycompany.com')"
+  "$(identity_fixture "${ACME}" 'MyCompany Bot' 'bot@mycompany.com')"
 
 check "a set name alone keeps the actor's e-mail" \
   'MyCompany Bot|424242+acme-agentp[bot]@users.noreply.github.com|acme-agentp[bot] via OIDC broker' \
-  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-agentp[bot]","id":424242}}' 'MyCompany Bot')"
+  "$(identity_fixture "${ACME}" 'MyCompany Bot')"
 
-identity_warning() {
-  local tmp
-  tmp=$(mktemp)
-  printf '%s' "$1" >"${tmp}"
-  { broker_identity "${tmp}" "" "" >/dev/null; } 2>&1
-  rm -f "${tmp}"
-}
+check "a set e-mail alone keeps the actor's name" \
+  'acme-agentp[bot]|bot@mycompany.com|acme-agentp[bot] via OIDC broker' \
+  "$(identity_fixture "${ACME}" '' 'bot@mycompany.com')"
 
-check "a rejected actor warns" \
-  "::warning::Ignoring the broker's actor: it is not a bot login with a numeric id. Commits use sonatype-guide[bot]." \
-  "$(identity_warning '{"token":"ghs_x","actor":{"login":"octocat","id":1}}')"
+check "set inputs override the fallback too" \
+  'MyCompany Bot|bot@mycompany.com|sonatype-guide[bot] via OIDC broker' \
+  "$(identity_fixture '{"token":"ghs_x"}' 'MyCompany Bot' 'bot@mycompany.com')"
 
-check "no actor does not warn" \
-  "" \
-  "$(identity_warning '{"token":"ghs_x"}')"
+check "a self-hosted broker without an actor gets a notice naming the inputs" \
+  "${GUIDE_IDENTITY}
+::notice::The broker at https://agp.example.com named no commit identity, so commits default to sonatype-guide[bot]. To credit your own App's bot, set the git-user-name and git-user-email inputs." \
+  "$(identity_fixture '{"token":"ghs_x"}' '' '' 'https://agp.example.com')"
+
+check "a self-hosted broker with both inputs set gets no notice" \
+  'MyCompany Bot|bot@mycompany.com|sonatype-guide[bot] via OIDC broker' \
+  "$(identity_fixture '{"token":"ghs_x"}' 'MyCompany Bot' 'bot@mycompany.com' 'https://agp.example.com')"
+
+check "a self-hosted broker with a valid actor gets no notice" \
+  "${ACME_IDENTITY}" \
+  "$(identity_fixture "${ACME}" '' '' 'https://agp.example.com')"
 
 # shellcheck disable=SC2016
-prepare_auth_identity_present() {
-  local script="${SCRIPT_DIR}/prepare-auth.sh"
-  grep -Fq "ACTOR_LOGIN=\$(jq -r '.actor.login // empty' \"\$RESP_BODY\" 2>/dev/null || true)" "${script}" \
-    && grep -Fq "ACTOR_ID=\$(jq -r '.actor.id // empty' \"\$RESP_BODY\" 2>/dev/null || true)" "${script}" \
-    && grep -Fq 'if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then' "${script}" \
-    && grep -Fq 'if [ -n "$ACTOR_LOGIN$ACTOR_ID" ]; then' "${script}" \
-    && grep -Fq '::warning::Ignoring the broker'"'"'s actor: it is not a bot login with a numeric id.' "${script}" \
-    && grep -Fq '    ACTOR_LOGIN="sonatype-guide[bot]"' "${script}" \
-    && grep -Fq '    ACTOR_ID="262430933"' "${script}" \
-    && grep -Fq 'AUTH_SOURCE="$ACTOR_LOGIN via OIDC broker"' "${script}" \
-    && grep -Fq 'GIT_NAME="$ACTOR_LOGIN"' "${script}" \
-    && grep -Fq 'GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"' "${script}"
-}
-check "prepare-auth.sh uses the tested commit identity block" \
+check "prepare-auth.sh resolves the identity with the tested function" \
   "match" \
-  "$(if prepare_auth_identity_present; then echo match; else echo drift; fi)"
+  "$(if grep -Fq 'resolve_broker_identity "$RESP_BODY" "$API_URL"' "${SCRIPT_DIR}/prepare-auth.sh"; then echo match; else echo drift; fi)"
 
 if [ "${fail}" -ne 0 ]; then
   echo "prepare-auth_test: FAILURES"

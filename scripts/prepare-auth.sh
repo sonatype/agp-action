@@ -23,9 +23,10 @@
 #      Server without OIDC federation, or local debugging. PRs are authored
 #      by whoever owns the supplied token.
 #
-#   2. GitHub Actions OIDC → Sonatype Guide broker — the default. Requires
-#      `permissions: id-token: write` on the job and the Sonatype Guide App
-#      installed on the repo. Mints a GitHub App installation access token
+#   2. GitHub Actions OIDC → token broker — the default. Requires
+#      `permissions: id-token: write` on the job and the broker's GitHub App
+#      (the Sonatype Guide App for Sonatype's broker; AGP_API_URL picks a
+#      self-hosted one) installed on the repo. Mints a GitHub App installation access token
 #      scoped to the repo with contents:write + pull_requests:write so PRs
 #      open as the minting App's bot (sonatype-guide[bot] for Sonatype's App).
 #
@@ -106,8 +107,8 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
     fi
     echo ""
     echo "Common causes:"
-    echo "  - The Sonatype Guide GitHub App is not installed on this repository."
-    echo "    Install it: https://github.com/apps/sonatype-guide"
+    echo "  - The broker's GitHub App is not installed on this repository. For"
+    echo "    Sonatype's broker that is https://github.com/apps/sonatype-guide"
     echo "  - The job is not running via sonatype/agp-action (required by"
     echo "    the broker's job_workflow_ref policy)."
     echo "  - The job is missing 'permissions: id-token: write'."
@@ -121,25 +122,10 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
   fi
   echo "::add-mask::$TOKEN"
 
-  # Step 3: default commit identity to the minting App's bot, which the broker names in
-  # `actor`. Without a valid one (older brokers, or a failed lookup) fall back to
-  # sonatype-guide[bot], whose id is fixed: GET https://api.github.com/users/sonatype-guide[bot] -> .id
-  ACTOR_LOGIN=$(jq -r '.actor.login // empty' "$RESP_BODY" 2>/dev/null || true)
-  ACTOR_ID=$(jq -r '.actor.id // empty' "$RESP_BODY" 2>/dev/null || true)
-  if [[ ! "$ACTOR_LOGIN" =~ ^[A-Za-z0-9-]+\[bot\]$ ]] || [[ ! "$ACTOR_ID" =~ ^[0-9]+$ ]]; then
-    if [ -n "$ACTOR_LOGIN$ACTOR_ID" ]; then
-      echo "::warning::Ignoring the broker's actor: it is not a bot login with a numeric id. Commits use sonatype-guide[bot]."
-    fi
-    ACTOR_LOGIN="sonatype-guide[bot]"
-    ACTOR_ID="262430933"
-  fi
-  AUTH_SOURCE="$ACTOR_LOGIN via OIDC broker"
-  if [ -z "$GIT_NAME" ]; then
-    GIT_NAME="$ACTOR_LOGIN"
-  fi
-  if [ -z "$GIT_EMAIL" ]; then
-    GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"
-  fi
+  # Step 3: commit identity from the minting App's bot, falling back to sonatype-guide[bot].
+  # shellcheck source=scripts/broker-identity.sh
+  source "$SCRIPT_DIR/broker-identity.sh"
+  resolve_broker_identity "$RESP_BODY" "$API_URL"
 
 elif [ -n "${GITHUB_TOKEN:-}" ]; then
   # Legacy backward-compat path: workflow exported env.GITHUB_TOKEN the

@@ -79,11 +79,13 @@ inputs:
   # Authentication for pushing commits and opening PRs
   #
   # By default the action mints a short-lived GitHub App installation access
-  # token for the Sonatype Guide App via Sonatype Guide's OIDC token broker
-  # (https://api.guide.sonatype.com/agp/installation-token). The resulting
-  # token produces PRs authored by the minting App's bot (sonatype-guide[bot]
-  # for Sonatype's App) with the Verified bot badge on commits. The Sonatype Guide App must be installed on the target
-  # repository, and the job must declare `permissions: id-token: write`.
+  # token through an OIDC token broker: Sonatype Guide's
+  # (https://api.guide.sonatype.com/agp/installation-token), or a self-hosted
+  # one chosen with AGP_API_URL. The resulting token produces PRs authored by
+  # the minting App's bot (sonatype-guide[bot] for Sonatype's App) with the
+  # Verified bot badge on commits. The broker's GitHub App (the Sonatype Guide
+  # App for Sonatype's broker) must be installed on the target repository, and
+  # the job must declare `permissions: id-token: write`.
   #
   # To opt out of the broker (air-gapped runners, GHES without OIDC, CI
   # debugging), set `github-token` to a PAT or GITHUB_TOKEN from the workflow.
@@ -174,7 +176,8 @@ runs:
     # GitHub App installation token via Sonatype Guide's broker. The token is
     # scoped to the current repo with contents:write + pull_requests:write
     # and produces PRs authored by the minting App's bot (sonatype-guide[bot]
-    # for Sonatype's App) with the Verified bot badge on commits. Requires `permissions: id-token: write` on the job.
+    # for Sonatype's App) with the Verified bot badge on commits. Requires
+    # `permissions: id-token: write` on the job.
     #
     # Override path: `github-token` input. Used for air-gapped runners, GHES
     # without OIDC federation, or local debugging. PRs in that case are

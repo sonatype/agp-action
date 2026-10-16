@@ -44,13 +44,18 @@ GitHub App installation access token, scoped to the current repository with
 `sonatype-guide[bot]` with the green Verified badge. No PATs or long-lived
 secrets required.
 
-When the broker mints the token with a different GitHub App (a self-hosted
-broker configured with your own App), commits are authored and committed as
-that App's bot, which the broker names in its response.
+A self-hosted broker configured with your own GitHub App is chosen with the
+`AGP_API_URL` variable. Commits are then authored and committed as that App's
+bot, which the broker names in its response as `actor`. A self-hosted broker
+must return `actor` for this; when it does not, commits fall back to
+`sonatype-guide[bot]` unless you set the `git-user-name` and `git-user-email`
+inputs.
 
 Prerequisites:
 
-1. Install the [Sonatype Guide GitHub App](https://github.com/apps/sonatype-guide) on the target repository.
+1. Install the broker's GitHub App on the target repository: the
+   [Sonatype Guide GitHub App](https://github.com/apps/sonatype-guide) for
+   Sonatype's broker, or your own App for a self-hosted one.
 2. Declare `permissions: id-token: write` on the job (as shown above).
 
 If you need to opt out (air-gapped runners, GitHub Enterprise Server without
