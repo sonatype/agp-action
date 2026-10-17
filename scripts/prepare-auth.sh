@@ -70,13 +70,15 @@ if [ -n "$INPUT_GITHUB_TOKEN" ]; then
 
 elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
   echo "🔑 Acquiring installation token via Sonatype Guide OIDC broker"
-  API_URL="${AGP_API_URL:-https://api.guide.sonatype.com}"
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=scripts/broker-identity.sh
+  source "$SCRIPT_DIR/broker-identity.sh"
+  API_URL="${AGP_API_URL:-$DEFAULT_BROKER_URL}"
 
   # Step 1: request an OIDC JWT from the GitHub Actions runtime. The minting logic
   # (timeouts, retries, error handling) and the default Sonatype Guide audience are
   # shared with gate/action.yml via scripts/mint-oidc-token.sh so the two callers
   # cannot drift apart. No audience argument => the helper's DEFAULT_GUIDE_AUDIENCE.
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   OIDC_JWT=$("$SCRIPT_DIR/mint-oidc-token.sh")
   echo "::add-mask::$OIDC_JWT"
 
@@ -123,8 +125,6 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
   echo "::add-mask::$TOKEN"
 
   # Step 3: commit identity from the minting App's bot, falling back to sonatype-guide[bot].
-  # shellcheck source=scripts/broker-identity.sh
-  source "$SCRIPT_DIR/broker-identity.sh"
   resolve_broker_identity "$RESP_BODY" "$API_URL"
 
 elif [ -n "${GITHUB_TOKEN:-}" ]; then

@@ -65,7 +65,7 @@ jobs:
         run: |
           bash scripts/gate_test.sh
 
-      - name: Test prepare-auth classified-error parsing
+      - name: Test prepare-auth error parsing and commit identity
         run: |
           bash scripts/prepare-auth_test.sh
 

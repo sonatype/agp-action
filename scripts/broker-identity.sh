@@ -22,10 +22,10 @@ resolve_broker_identity() {
   if [ "$actor_type" = "object" ]; then
     login=$(jq -r '.actor.login // empty' "$resp_body")
     id=$(jq -r '.actor.id // empty' "$resp_body")
-    if [[ ! "$login" =~ ^[A-Za-z0-9-]+\[bot\]$ ]]; then
+    if [[ ! "$login" =~ ^[A-Za-z0-9-]{1,39}\[bot\]$ ]]; then
       problem="its login is not a GitHub bot login"
-    elif [[ ! "$id" =~ ^[0-9]+$ ]]; then
-      problem="its id is not numeric"
+    elif [[ ! "$id" =~ ^[1-9][0-9]*$ ]]; then
+      problem="its id is not a positive number"
     fi
   elif [ "$actor_type" != "absent" ]; then
     problem="it is not an object"
@@ -35,7 +35,7 @@ resolve_broker_identity() {
     if [ -n "$problem" ]; then
       echo "::warning::Ignoring the broker's actor because ${problem}; falling back to the sonatype-guide[bot] default identity."
     fi
-    if [ "$api_url" != "$DEFAULT_BROKER_URL" ] && { [ -z "$GIT_NAME" ] || [ -z "$GIT_EMAIL" ]; }; then
+    if [ "${api_url%/}" != "$DEFAULT_BROKER_URL" ] && { [ -z "$GIT_NAME" ] || [ -z "$GIT_EMAIL" ]; }; then
       echo "::notice::The broker at ${api_url} named no commit identity, so commits default to sonatype-guide[bot]. To credit your own App's bot, set the git-user-name and git-user-email inputs."
     fi
     login="$SONATYPE_GUIDE_BOT_LOGIN"
