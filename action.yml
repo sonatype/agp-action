@@ -79,26 +79,28 @@ inputs:
   # Authentication for pushing commits and opening PRs
   #
   # By default the action mints a short-lived GitHub App installation access
-  # token for the Sonatype Guide App via Sonatype Guide's OIDC token broker
-  # (https://api.guide.sonatype.com/agp/installation-token). The resulting
-  # token produces PRs authored by sonatype-guide[bot] with the Verified bot
-  # badge on commits. The Sonatype Guide App must be installed on the target
-  # repository, and the job must declare `permissions: id-token: write`.
+  # token through an OIDC token broker: Sonatype Guide's
+  # (https://api.guide.sonatype.com/agp/installation-token), or a self-hosted
+  # one chosen with AGP_API_URL. The resulting token produces PRs authored by
+  # the minting App's bot (sonatype-guide[bot] for Sonatype's App) with the
+  # Verified bot badge on commits. The broker's GitHub App (the Sonatype Guide
+  # App for Sonatype's broker) must be installed on the target repository, and
+  # the job must declare `permissions: id-token: write`.
   #
   # To opt out of the broker (air-gapped runners, GHES without OIDC, CI
   # debugging), set `github-token` to a PAT or GITHUB_TOKEN from the workflow.
   # In that case PRs will be authored by whoever owns the supplied token.
   # --------------------------------------------------------------------------
   github-token:
-    description: "Override for the token used to push commits and open PRs. When unset, the action mints one from the Sonatype Guide OIDC broker so PRs open as sonatype-guide[bot]."
+    description: "Override for the token used to push commits and open PRs. When unset, the action mints one from the Sonatype Guide OIDC broker so PRs open as the minting App's bot (sonatype-guide[bot] for Sonatype's App)."
     required: false
     default: ""
   git-user-name:
-    description: "Git user name for commits. Leave blank to match the authenticating identity (sonatype-guide[bot] when the broker is used)."
+    description: "Git user name for commits. Leave blank to match the authenticating identity (the minting App's bot when the broker is used, sonatype-guide[bot] for Sonatype's App)."
     required: false
     default: ""
   git-user-email:
-    description: "Git user email for commits. Leave blank to match the authenticating identity — e.g. <user-id>+sonatype-guide[bot]@users.noreply.github.com, which is required for GitHub to show the Verified bot badge on commits."
+    description: "Git user email for commits. Leave blank to match the authenticating identity — e.g. <user-id>+<bot-login>@users.noreply.github.com, which is required for GitHub to show the Verified bot badge on commits."
     required: false
     default: ""
   # Docker image configuration
@@ -173,8 +175,9 @@ runs:
     # Default path: exchange the GitHub Actions OIDC JWT for a short-lived
     # GitHub App installation token via Sonatype Guide's broker. The token is
     # scoped to the current repo with contents:write + pull_requests:write
-    # and produces PRs authored by sonatype-guide[bot] with the Verified bot
-    # badge on commits. Requires `permissions: id-token: write` on the job.
+    # and produces PRs authored by the minting App's bot (sonatype-guide[bot]
+    # for Sonatype's App) with the Verified bot badge on commits. Requires
+    # `permissions: id-token: write` on the job.
     #
     # Override path: `github-token` input. Used for air-gapped runners, GHES
     # without OIDC federation, or local debugging. PRs in that case are

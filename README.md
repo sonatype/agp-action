@@ -36,7 +36,7 @@ jobs:
           AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
 ```
 
-### Pull requests open as `sonatype-guide[bot]`
+### Pull requests open as `sonatype-guide[bot]` or your own App's bot
 
 By default the action exchanges the GitHub Actions OIDC JWT for a short-lived
 GitHub App installation access token, scoped to the current repository with
@@ -44,9 +44,18 @@ GitHub App installation access token, scoped to the current repository with
 `sonatype-guide[bot]` with the green Verified badge. No PATs or long-lived
 secrets required.
 
+A self-hosted broker configured with your own GitHub App is chosen with the
+`AGP_API_URL` variable. Commits are then authored and committed as that App's
+bot, which the broker names in its response as `actor`. A self-hosted broker
+must return `actor` for this; when it does not, commits fall back to
+`sonatype-guide[bot]` unless you set the `git-user-name` and `git-user-email`
+inputs.
+
 Prerequisites:
 
-1. Install the [Sonatype Guide GitHub App](https://github.com/apps/sonatype-guide) on the target repository.
+1. Install the broker's GitHub App on the target repository: the
+   [Sonatype Guide GitHub App](https://github.com/apps/sonatype-guide) for
+   Sonatype's broker, or your own App for a self-hosted one.
 2. Declare `permissions: id-token: write` on the job (as shown above).
 
 If you need to opt out (air-gapped runners, GitHub Enterprise Server without
@@ -134,9 +143,9 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `mount-docker-socket` | No | `false` | Bind-mount the host Docker socket into the AGP container to enable container-based tools (Testcontainers, Docker Compose) during setup and validation. **Container-escape risk — see [Security](#security).** |
 | `config-path` | No | `agp.yml` | Path to the effective `agp.yml` written by the gate action. Read to resolve the governed Bedrock role (`agent.awsRole`). |
 | `verbose` | No | `false` | Enable verbose output (may expose sensitive data in logs) |
-| `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as `sonatype-guide[bot]`. |
-| `git-user-name` | No | `sonatype-guide[bot]` when broker is used, otherwise `AGP Bot` | Git user name for commits. |
-| `git-user-email` | No | `<user-id>+sonatype-guide[bot]@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
+| `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as the minting App's bot (`sonatype-guide[bot]` for Sonatype's). |
+| `git-user-name` | No | The minting App's bot (`sonatype-guide[bot]` for Sonatype's) when broker is used, otherwise `AGP Bot` | Git user name for commits. |
+| `git-user-email` | No | `<user-id>+<bot-login>@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
 
 ## Security
 

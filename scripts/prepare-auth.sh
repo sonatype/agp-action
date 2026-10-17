@@ -23,11 +23,12 @@
 #      Server without OIDC federation, or local debugging. PRs are authored
 #      by whoever owns the supplied token.
 #
-#   2. GitHub Actions OIDC → Sonatype Guide broker — the default. Requires
-#      `permissions: id-token: write` on the job and the Sonatype Guide App
-#      installed on the repo. Mints a GitHub App installation access token
+#   2. GitHub Actions OIDC → token broker — the default. Requires
+#      `permissions: id-token: write` on the job and the broker's GitHub App
+#      (the Sonatype Guide App for Sonatype's broker; AGP_API_URL picks a
+#      self-hosted one) installed on the repo. Mints a GitHub App installation access token
 #      scoped to the repo with contents:write + pull_requests:write so PRs
-#      open as sonatype-guide[bot].
+#      open as the minting App's bot (sonatype-guide[bot] for Sonatype's App).
 #
 #   3. $GITHUB_TOKEN — legacy backward-compat path. Workflow exported the
 #      token the old way (pre-OIDC). Emits a deprecation warning and keeps
@@ -69,13 +70,15 @@ if [ -n "$INPUT_GITHUB_TOKEN" ]; then
 
 elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
   echo "🔑 Acquiring installation token via Sonatype Guide OIDC broker"
-  API_URL="${AGP_API_URL:-https://api.guide.sonatype.com}"
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=scripts/broker-identity.sh
+  source "$SCRIPT_DIR/broker-identity.sh"
+  API_URL="${AGP_API_URL:-$DEFAULT_BROKER_URL}"
 
   # Step 1: request an OIDC JWT from the GitHub Actions runtime. The minting logic
   # (timeouts, retries, error handling) and the default Sonatype Guide audience are
   # shared with gate/action.yml via scripts/mint-oidc-token.sh so the two callers
   # cannot drift apart. No audience argument => the helper's DEFAULT_GUIDE_AUDIENCE.
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   OIDC_JWT=$("$SCRIPT_DIR/mint-oidc-token.sh")
   echo "::add-mask::$OIDC_JWT"
 
@@ -106,8 +109,8 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
     fi
     echo ""
     echo "Common causes:"
-    echo "  - The Sonatype Guide GitHub App is not installed on this repository."
-    echo "    Install it: https://github.com/apps/sonatype-guide"
+    echo "  - The broker's GitHub App is not installed on this repository. For"
+    echo "    Sonatype's broker that is https://github.com/apps/sonatype-guide"
     echo "  - The job is not running via sonatype/agp-action (required by"
     echo "    the broker's job_workflow_ref policy)."
     echo "  - The job is missing 'permissions: id-token: write'."
@@ -120,24 +123,9 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
     exit 1
   fi
   echo "::add-mask::$TOKEN"
-  AUTH_SOURCE="sonatype-guide[bot] via OIDC broker"
 
-  # Step 3: default commit identity to sonatype-guide[bot] when the broker
-  # minted the token. The numeric user ID is required so GitHub shows the
-  # 'Verified · by sonatype-guide[bot]' badge on commits (this is the
-  # documented formula from GitHub's actions/create-github-app-token README).
-  #
-  # The bot's numeric user ID is immutable for the app's lifetime, so it is hardcoded
-  # rather than resolved with a live, unauthenticated api.github.com call on every run
-  # (that lookup counts against the 60/hour/IP unauthenticated rate limit shared across
-  # all workflows on a hosted-runner egress IP). Source of truth:
-  #   GET https://api.github.com/users/sonatype-guide[bot] -> .id   (262430933)
-  if [ -z "$GIT_NAME" ]; then
-    GIT_NAME="sonatype-guide[bot]"
-  fi
-  if [ -z "$GIT_EMAIL" ]; then
-    GIT_EMAIL="262430933+sonatype-guide[bot]@users.noreply.github.com"
-  fi
+  # Step 3: commit identity from the minting App's bot, falling back to sonatype-guide[bot].
+  resolve_broker_identity "$RESP_BODY" "$API_URL"
 
 elif [ -n "${GITHUB_TOKEN:-}" ]; then
   # Legacy backward-compat path: workflow exported env.GITHUB_TOKEN the
