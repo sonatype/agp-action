@@ -233,6 +233,62 @@ check "prepare-auth.sh sets the inputs, sources the function and takes its defau
   "match" \
   "$(prepare_auth_wiring)"
 
+# --- Audience: what mint-oidc-token.sh actually asks the token endpoint for ---
+# A stub curl on PATH records the --data-urlencode argument and answers with a token body, so
+# these exercise the real script rather than its text.
+requested_audience() {
+  local stub_dir out
+  stub_dir="$(mktemp -d)"
+  out="${stub_dir}/args"
+  cat >"${stub_dir}/curl" <<'STUB'
+#!/usr/bin/env bash
+prev=""
+body_file=""
+for a in "$@"; do
+  [ "${prev}" = "--data-urlencode" ] && printf '%s\n' "${a}" >>"${AUDIENCE_STUB_OUT}"
+  [ "${prev}" = "-o" ] && body_file="${a}"
+  prev="${a}"
+done
+printf '{"value":"stub-token"}' >"${body_file}"
+printf '200'
+STUB
+  chmod +x "${stub_dir}/curl"
+  AUDIENCE_STUB_OUT="${out}" PATH="${stub_dir}:${PATH}" \
+    ACTIONS_ID_TOKEN_REQUEST_URL="https://token.invalid/request" \
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN="runtime-token" \
+    "${SCRIPT_DIR}/mint-oidc-token.sh" "$@" >/dev/null
+  cat "${out}"
+  rm -rf "${stub_dir}"
+}
+
+check "no audience argument requests Sonatype's cloud audience" \
+  "audience=https://guide.sonatype.com" \
+  "$(requested_audience)"
+check "an empty audience argument requests Sonatype's cloud audience" \
+  "audience=https://guide.sonatype.com" \
+  "$(requested_audience "")"
+check "an installation's base URL is requested as given" \
+  "audience=https://iq.example.com" \
+  "$(requested_audience "https://iq.example.com")"
+
+# prepare-auth.sh must hand the action's audience input to the minting helper.
+prepare_auth_passes_audience() {
+  grep -Eq 'mint-oidc-token\.sh" "\$\{INPUT_AUDIENCE:-\}"' "${SCRIPT_DIR}/prepare-auth.sh"
+}
+check "prepare-auth.sh mints with the audience input" \
+  "match" \
+  "$(if prepare_auth_passes_audience; then echo match; else echo drift; fi)"
+
+# The container's CLI mints its own tokens from AGP_OIDC_AUDIENCE, so the Run AGP step must
+# forward the input into it.
+action_forwards_audience_to_container() {
+  grep -Eq 'AGP_OIDC_AUDIENCE: \$\{\{ inputs\.audience \}\}' "${SCRIPT_DIR}/../action.yml" \
+    && grep -Eq -- '-e AGP_OIDC_AUDIENCE' "${SCRIPT_DIR}/../action.yml"
+}
+check "action.yml forwards the audience input into the container" \
+  "match" \
+  "$(if action_forwards_audience_to_container; then echo match; else echo drift; fi)"
+
 if [ "${fail}" -ne 0 ]; then
   echo "prepare-auth_test: FAILURES"
   exit 1

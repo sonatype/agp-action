@@ -43,6 +43,7 @@
 #   INPUT_GITHUB_TOKEN             — from action input `github-token`
 #   INPUT_GIT_USER_NAME            — from action input `git-user-name`
 #   INPUT_GIT_USER_EMAIL           — from action input `git-user-email`
+#   INPUT_AUDIENCE                 — from action input `audience`; empty requests Sonatype's cloud audience
 #   ACTIONS_ID_TOKEN_REQUEST_URL   — set by runtime when id-token: write is on
 #   ACTIONS_ID_TOKEN_REQUEST_TOKEN — set by runtime when id-token: write is on
 #   AGP_API_URL                    — override broker URL (defaults to prod)
@@ -78,8 +79,8 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
   # Step 1: request an OIDC JWT from the GitHub Actions runtime. The minting logic
   # (timeouts, retries, error handling) and the default Sonatype Guide audience are
   # shared with gate/action.yml via scripts/mint-oidc-token.sh so the two callers
-  # cannot drift apart. No audience argument => the helper's DEFAULT_GUIDE_AUDIENCE.
-  OIDC_JWT=$("$SCRIPT_DIR/mint-oidc-token.sh")
+  # cannot drift apart. An empty audience => the helper's DEFAULT_GUIDE_AUDIENCE.
+  OIDC_JWT=$("$SCRIPT_DIR/mint-oidc-token.sh" "${INPUT_AUDIENCE:-}")
   echo "::add-mask::$OIDC_JWT"
 
   # Step 2: exchange the JWT for a scoped installation token.

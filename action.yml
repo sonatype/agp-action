@@ -128,6 +128,10 @@ inputs:
     description: "Path to the effective agp.yml written by the gate action. Read to resolve the governed Bedrock role (agent.awsRole)."
     required: false
     default: "agp.yml"
+  audience:
+    description: "OIDC audience to request for the GitHub Actions token sent to Sonatype Guide. Leave empty for Sonatype's cloud service (https://guide.sonatype.com). Set it to your Nexus IQ Server base URL when Agent P runs on a self-hosted installation, which accepts only tokens addressed to itself."
+    required: false
+    default: ""
 
 outputs:
   run-id:
@@ -189,6 +193,7 @@ runs:
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
         INPUT_GIT_USER_NAME: ${{ inputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+        INPUT_AUDIENCE: ${{ inputs.audience }}
       run: |
         bash "${{ github.action_path }}/scripts/prepare-auth.sh"
 
@@ -251,6 +256,9 @@ runs:
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_GIT_USER_NAME: ${{ steps.prepare-auth.outputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ steps.prepare-auth.outputs.git-user-email }}
+        # The CLI mints its own OIDC tokens for Guide; it reads this variable and, when empty,
+        # requests Sonatype's cloud audience.
+        AGP_OIDC_AUDIENCE: ${{ inputs.audience }}
       run: |
         IMAGE="${{ inputs.docker-image }}"
         echo "📦 Using AGP Docker image: ${IMAGE}"
@@ -367,6 +375,7 @@ runs:
           -e GITHUB_ACTIONS=true \
           -e ACTIONS_ID_TOKEN_REQUEST_URL \
           -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+          -e AGP_OIDC_AUDIENCE \
           -e GH_DEBUG=api \
           -e AWS_ACCESS_KEY_ID \
           -e AWS_SECRET_ACCESS_KEY \
