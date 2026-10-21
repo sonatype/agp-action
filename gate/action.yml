@@ -38,7 +38,7 @@ inputs:
   audience:
     # Canonical default mirrors DEFAULT_GUIDE_AUDIENCE in scripts/mint-oidc-token.sh;
     # keep the two in sync.
-    description: "OIDC audience expected by Sonatype Guide. Leave at the default unless Sonatype Support instructs otherwise."
+    description: "OIDC audience expected by Sonatype Guide. Leave at the default for Sonatype's cloud service; set it to your Nexus IQ base URL on a self-hosted installation, together with the main action's `audience` and `AGP_API_URL`."
     required: false
     default: "https://guide.sonatype.com"
   config-path:

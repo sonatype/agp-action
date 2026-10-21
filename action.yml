@@ -129,7 +129,7 @@ inputs:
     required: false
     default: "agp.yml"
   audience:
-    description: "OIDC audience to request for the GitHub Actions token sent to Sonatype Guide. Leave empty for Sonatype's cloud service (https://guide.sonatype.com). Set it to your Nexus IQ Server base URL when Agent P runs on a self-hosted installation, which accepts only tokens addressed to itself."
+    description: "OIDC audience to request for the GitHub Actions token sent to Sonatype Guide. Leave empty for Sonatype's cloud service (https://guide.sonatype.com). A self-hosted installation accepts only tokens addressed to itself: set this input, the gate action's `audience` and `AGP_API_URL` to the same Nexus IQ base URL."
     required: false
     default: ""
 
@@ -256,10 +256,12 @@ runs:
         INPUT_VERBOSE: ${{ inputs.verbose }}
         INPUT_GIT_USER_NAME: ${{ steps.prepare-auth.outputs.git-user-name }}
         INPUT_GIT_USER_EMAIL: ${{ steps.prepare-auth.outputs.git-user-email }}
-        # The CLI mints its own OIDC tokens for Guide; it reads this variable and, when empty,
-        # requests Sonatype's cloud audience.
-        AGP_OIDC_AUDIENCE: ${{ inputs.audience }}
+        INPUT_AUDIENCE: ${{ inputs.audience }}
       run: |
+        # The CLI mints its own OIDC tokens for Guide; it reads AGP_OIDC_AUDIENCE and, when
+        # unset, requests Sonatype's cloud audience. Only an explicit audience input is exported,
+        # so an AGP_OIDC_AUDIENCE set at job level still reaches the container.
+        if [ -n "${INPUT_AUDIENCE:-}" ]; then export AGP_OIDC_AUDIENCE="$INPUT_AUDIENCE"; fi
         IMAGE="${{ inputs.docker-image }}"
         echo "📦 Using AGP Docker image: ${IMAGE}"
         if [ "${{ inputs.skip-docker-pull }}" = "true" ]; then

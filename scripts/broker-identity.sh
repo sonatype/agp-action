@@ -53,3 +53,13 @@ resolve_broker_identity() {
     GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"
   fi
 }
+
+# Annotates a likely mismatch between the OIDC audience and the broker it is sent to. Warns only, never fails.
+warn_on_audience_broker_mismatch() {
+  local audience="$1" api_url="$2"
+  if [ -n "$audience" ] && [ "${api_url%/}" = "$DEFAULT_BROKER_URL" ]; then
+    echo "::warning::audience is set but AGP_API_URL is the Sonatype cloud broker; a token addressed to ${audience} will be refused there. Set AGP_API_URL to the same installation"
+  elif [ -z "$audience" ] && [ "${api_url%/}" != "$DEFAULT_BROKER_URL" ]; then
+    echo "::notice::The token is addressed to Sonatype's cloud audience although AGP_API_URL points to ${api_url}. For a self-hosted installation, set audience to the same installation."
+  fi
+}

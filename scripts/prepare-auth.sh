@@ -76,6 +76,8 @@ elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQU
   source "$SCRIPT_DIR/broker-identity.sh"
   API_URL="${AGP_API_URL:-$DEFAULT_BROKER_URL}"
 
+  warn_on_audience_broker_mismatch "${INPUT_AUDIENCE:-}" "$API_URL"
+
   # Step 1: request an OIDC JWT from the GitHub Actions runtime. The minting logic
   # (timeouts, retries, error handling) and the default Sonatype Guide audience are
   # shared with gate/action.yml via scripts/mint-oidc-token.sh so the two callers

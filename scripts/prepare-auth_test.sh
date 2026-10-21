@@ -280,14 +280,51 @@ check "prepare-auth.sh mints with the audience input" \
   "$(if prepare_auth_passes_audience; then echo match; else echo drift; fi)"
 
 # The container's CLI mints its own tokens from AGP_OIDC_AUDIENCE, so the Run AGP step must
-# forward the input into it.
+# forward the input into it. Only an explicit audience is exported, so a job-level
+# AGP_OIDC_AUDIENCE still reaches the container when the input is empty.
+run_agp_block() {
+  awk '
+    /^    - name: / { if (inblock) exit }
+    /^    - name: Run AGP/ { inblock = 1 }
+    inblock { print }
+  ' "${SCRIPT_DIR}/../action.yml"
+}
+# shellcheck disable=SC2016 # the patterns match literal ${{ }} and $ text
 action_forwards_audience_to_container() {
-  grep -Eq 'AGP_OIDC_AUDIENCE: \$\{\{ inputs\.audience \}\}' "${SCRIPT_DIR}/../action.yml" \
-    && grep -Eq -- '-e AGP_OIDC_AUDIENCE' "${SCRIPT_DIR}/../action.yml"
+  local block
+  block=$(run_agp_block)
+  [ -n "${block}" ] \
+    && grep -Fq 'INPUT_AUDIENCE: ${{ inputs.audience }}' <<<"${block}" \
+    && grep -Eq 'if \[ -n "\$\{INPUT_AUDIENCE:-\}" \]; then export AGP_OIDC_AUDIENCE="\$INPUT_AUDIENCE"; fi' <<<"${block}" \
+    && grep -Eq -- '-e AGP_OIDC_AUDIENCE( |\\|$)' <<<"${block}"
 }
 check "action.yml forwards the audience input into the container" \
   "match" \
   "$(if action_forwards_audience_to_container; then echo match; else echo drift; fi)"
+check "the Run AGP step env does not assign AGP_OIDC_AUDIENCE directly" \
+  "none" \
+  "$(if run_agp_block | grep -Eq '^ +AGP_OIDC_AUDIENCE:'; then echo assigned; else echo none; fi)"
+
+# Audience / broker consistency annotations.
+audience_fixture() {
+  warn_on_audience_broker_mismatch "$1" "$2"
+}
+WARN_PREFIX="::warning::audience is set but AGP_API_URL is the Sonatype cloud broker"
+check "an audience with the cloud broker warns" \
+  "match" \
+  "$(if audience_fixture "https://iq.example.com" "${DEFAULT_BROKER_URL}" | grep -Fq "${WARN_PREFIX}; a token addressed to https://iq.example.com will be refused there. Set AGP_API_URL to the same installation"; then echo match; else echo none; fi)"
+check "an audience with the cloud broker and a trailing slash warns" \
+  "match" \
+  "$(if audience_fixture "https://iq.example.com" "${DEFAULT_BROKER_URL}/" | grep -Fq "${WARN_PREFIX}"; then echo match; else echo none; fi)"
+check "no audience with the cloud broker is silent" \
+  "" \
+  "$(audience_fixture "" "${DEFAULT_BROKER_URL}")"
+check "no audience with another broker notices the cloud audience" \
+  "match" \
+  "$(if audience_fixture "" "https://iq.example.com" | grep -Fq '::notice::'; then echo match; else echo none; fi)"
+check "an audience with another broker is silent" \
+  "" \
+  "$(audience_fixture "https://iq.example.com" "https://iq.example.com")"
 
 if [ "${fail}" -ne 0 ]; then
   echo "prepare-auth_test: FAILURES"
