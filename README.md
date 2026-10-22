@@ -142,10 +142,44 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `skip-docker-pull` | No | `false` | Skip pulling the Docker image (for local testing with pre-built images) |
 | `mount-docker-socket` | No | `false` | Bind-mount the host Docker socket into the AGP container to enable container-based tools (Testcontainers, Docker Compose) during setup and validation. **Container-escape risk — see [Security](#security).** |
 | `config-path` | No | `agp.yml` | Path to the effective `agp.yml` written by the gate action. Read to resolve the governed Bedrock role (`agent.awsRole`). |
+| `audience` | No | _(Sonatype's cloud service, `https://guide.sonatype.com`)_ | OIDC audience requested for the GitHub Actions token sent to Sonatype Guide. Leave it empty for Sonatype's cloud service. On a self-hosted installation set it to your Nexus IQ Server base URL, and point `AGP_API_URL` at the same installation. See [Self-hosted Nexus IQ Server](#self-hosted-nexus-iq-server). |
 | `verbose` | No | `false` | Enable verbose output (may expose sensitive data in logs) |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as the minting App's bot (`sonatype-guide[bot]` for Sonatype's). |
 | `git-user-name` | No | The minting App's bot (`sonatype-guide[bot]` for Sonatype's) when broker is used, otherwise `AGP Bot` | Git user name for commits. |
 | `git-user-email` | No | `<user-id>+<bot-login>@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
+
+### Self-hosted Nexus IQ Server
+
+A self-hosted installation accepts only OIDC tokens addressed to itself. Set the main action's `audience`, the gate's `audience` and the `AGP_API_URL` environment variable to the same Nexus IQ base URL. The action warns when `audience` is set while `AGP_API_URL` still points at Sonatype's cloud broker.
+
+```yaml
+env:
+  AGP_API_URL: https://iq.example.com
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sonatype/agp-action/gate@v1
+        with:
+          audience: https://iq.example.com
+  agp:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sonatype/agp-action@v1
+        with:
+          audience: https://iq.example.com
+```
 
 ## Security
 
@@ -571,7 +605,7 @@ stops conflicting with the governed config (a tracked file cannot be hidden by `
 | Input | Default | Description |
 |-------|---------|-------------|
 | `guide-url` | `""` (empty) | Base URL of the Sonatype Guide API. Must be HTTPS. The action manifest declares an empty default; the effective fallback (`$AGP_API_URL`, then `https://api.guide.sonatype.com`) is resolved in `scripts/gate.sh`. |
-| `audience` | `https://guide.sonatype.com` | OIDC audience expected by Sonatype Guide. Leave at the default unless Sonatype Support instructs otherwise. |
+| `audience` | `https://guide.sonatype.com` | OIDC audience expected by Sonatype Guide. Leave at the default for Sonatype's cloud service; set it to your Nexus IQ base URL on a self-hosted installation. See [Self-hosted Nexus IQ Server](#self-hosted-nexus-iq-server). |
 | `config-path` | `agp.yml` | Where to write the rendered `agp.yml`. Must be a relative path inside the workspace; absolute paths, `..` segments, control characters (a newline would smuggle extra patterns into the git-exclude entry below), and paths resolving outside `$GITHUB_WORKSPACE` via symlinks are rejected (fail-closed). The written file is marked git-excluded locally (`.git/info/exclude`), so it never appears as a pending change. In the two-job pattern this file is local to the **gate** job's runner — only the `directive` output crosses to the AGP job. It's useful when you run the gate inline in the same job as AGP, or want to upload/inspect the rendered config as an artifact. |
 
 ### Outputs

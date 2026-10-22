@@ -233,6 +233,99 @@ check "prepare-auth.sh sets the inputs, sources the function and takes its defau
   "match" \
   "$(prepare_auth_wiring)"
 
+# --- Audience: what mint-oidc-token.sh actually asks the token endpoint for ---
+# A stub curl on PATH records the --data-urlencode argument and answers with a token body, so
+# these exercise the real script rather than its text.
+requested_audience() {
+  local stub_dir out
+  stub_dir="$(mktemp -d)"
+  out="${stub_dir}/args"
+  cat >"${stub_dir}/curl" <<'STUB'
+#!/usr/bin/env bash
+prev=""
+body_file=""
+for a in "$@"; do
+  [ "${prev}" = "--data-urlencode" ] && printf '%s\n' "${a}" >>"${AUDIENCE_STUB_OUT}"
+  [ "${prev}" = "-o" ] && body_file="${a}"
+  prev="${a}"
+done
+printf '{"value":"stub-token"}' >"${body_file}"
+printf '200'
+STUB
+  chmod +x "${stub_dir}/curl"
+  AUDIENCE_STUB_OUT="${out}" PATH="${stub_dir}:${PATH}" \
+    ACTIONS_ID_TOKEN_REQUEST_URL="https://token.invalid/request" \
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN="runtime-token" \
+    "${SCRIPT_DIR}/mint-oidc-token.sh" "$@" >/dev/null
+  cat "${out}"
+  rm -rf "${stub_dir}"
+}
+
+check "no audience argument requests Sonatype's cloud audience" \
+  "audience=https://guide.sonatype.com" \
+  "$(requested_audience)"
+check "an empty audience argument requests Sonatype's cloud audience" \
+  "audience=https://guide.sonatype.com" \
+  "$(requested_audience "")"
+check "an installation's base URL is requested as given" \
+  "audience=https://iq.example.com" \
+  "$(requested_audience "https://iq.example.com")"
+
+# prepare-auth.sh must hand the action's audience input to the minting helper.
+prepare_auth_passes_audience() {
+  grep -Eq 'mint-oidc-token\.sh" "\$\{INPUT_AUDIENCE:-\}"' "${SCRIPT_DIR}/prepare-auth.sh"
+}
+check "prepare-auth.sh mints with the audience input" \
+  "match" \
+  "$(if prepare_auth_passes_audience; then echo match; else echo drift; fi)"
+
+# The container's CLI mints its own tokens from AGP_OIDC_AUDIENCE, so the Run AGP step must
+# forward the input into it. Only an explicit audience is exported, so a job-level
+# AGP_OIDC_AUDIENCE still reaches the container when the input is empty.
+run_agp_block() {
+  awk '
+    /^    - name: / { if (inblock) exit }
+    /^    - name: Run AGP/ { inblock = 1 }
+    inblock { print }
+  ' "${SCRIPT_DIR}/../action.yml"
+}
+# shellcheck disable=SC2016 # the patterns match literal ${{ }} and $ text
+action_forwards_audience_to_container() {
+  local block
+  block=$(run_agp_block)
+  [ -n "${block}" ] \
+    && grep -Fq 'INPUT_AUDIENCE: ${{ inputs.audience }}' <<<"${block}" \
+    && grep -Eq 'if \[ -n "\$\{INPUT_AUDIENCE:-\}" \]; then export AGP_OIDC_AUDIENCE="\$INPUT_AUDIENCE"; fi' <<<"${block}" \
+    && grep -Eq -- '-e AGP_OIDC_AUDIENCE( |\\|$)' <<<"${block}"
+}
+check "action.yml forwards the audience input into the container" \
+  "match" \
+  "$(if action_forwards_audience_to_container; then echo match; else echo drift; fi)"
+check "the Run AGP step env does not assign AGP_OIDC_AUDIENCE directly" \
+  "none" \
+  "$(if run_agp_block | grep -Eq '^ +AGP_OIDC_AUDIENCE:'; then echo assigned; else echo none; fi)"
+
+# Audience / broker consistency annotations.
+audience_fixture() {
+  warn_on_audience_broker_mismatch "$1" "$2"
+}
+WARN_PREFIX="::warning::audience is set but AGP_API_URL is the Sonatype cloud broker"
+check "an audience with the cloud broker warns" \
+  "match" \
+  "$(if audience_fixture "https://iq.example.com" "${DEFAULT_BROKER_URL}" | grep -Fq "${WARN_PREFIX}; a token addressed to https://iq.example.com will be refused there. Set AGP_API_URL to the same installation"; then echo match; else echo none; fi)"
+check "an audience with the cloud broker and a trailing slash warns" \
+  "match" \
+  "$(if audience_fixture "https://iq.example.com" "${DEFAULT_BROKER_URL}/" | grep -Fq "${WARN_PREFIX}"; then echo match; else echo none; fi)"
+check "no audience with the cloud broker is silent" \
+  "" \
+  "$(audience_fixture "" "${DEFAULT_BROKER_URL}")"
+check "no audience with another broker notices the cloud audience" \
+  "match" \
+  "$(if audience_fixture "" "https://iq.example.com" | grep -Fq '::notice::'; then echo match; else echo none; fi)"
+check "an audience with another broker is silent" \
+  "" \
+  "$(audience_fixture "https://iq.example.com" "https://iq.example.com")"
+
 if [ "${fail}" -ne 0 ]; then
   echo "prepare-auth_test: FAILURES"
   exit 1
