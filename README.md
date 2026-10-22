@@ -133,6 +133,7 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `group` | No | | Apply only a specific group by ID |
 | `validation-commands` | No | | Commands to validate upgrades (newline-separated) |
 | `npmrc-content` | No | | `.npmrc` file content for private registry authentication |
+| `netrc-content` | No | | `.netrc` file content for private pip/uv index authentication. See [Private pip/uv Index](#private-pipuv-index) |
 | `maven-settings-xml` | No | | Maven `settings.xml` content for private repository authentication (Maven builds only) |
 | `gradle-init-script` | No | | Gradle init script content for private repository authentication (Gradle builds only). See [Private Gradle Repositories](#private-gradle-repositories) |
 | `anthropic-base-url` | No | | Custom Anthropic API endpoint |
@@ -473,6 +474,31 @@ For projects using a private npm registry (like Nexus or Artifactory), provide y
        AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
    ```
+
+### Private pip/uv Index
+
+For Python projects whose pip or uv index requires credentials (for example a `[[tool.uv.index]]`
+entry pointing at Nexus), provide `.netrc` content. It is mounted read-only as `~/.netrc` in the
+container, and uv and pip both read that file. Without it, steps such as `uv lock` fail with
+`401 Unauthorized`.
+
+```yaml
+- name: Run AGP
+  uses: sonatype/agp-action@v1
+  with:
+    create-pr: true
+    netrc-content: |
+      machine sonatype.repo.sonatype.app
+      login ${{ secrets.UV_USER }}
+      password ${{ secrets.UV_PASSWORD }}
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The content is written to a file on the runner and removed when the step ends. It is not passed
+to the container as an environment variable.
 
 ### Private Gradle Repositories
 

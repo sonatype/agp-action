@@ -63,6 +63,10 @@ inputs:
     description: ".npmrc file content for private registry authentication"
     required: false
     default: ""
+  netrc-content:
+    description: ".netrc file content for private pip/uv index authentication"
+    required: false
+    default: ""
   maven-settings-xml:
     description: "Maven settings.xml content for private repository authentication"
     required: false
@@ -250,6 +254,7 @@ runs:
         INPUT_GROUP: ${{ inputs.group }}
         INPUT_VALIDATION_COMMANDS: ${{ inputs.validation-commands }}
         INPUT_NPMRC_CONTENT: ${{ inputs.npmrc-content }}
+        INPUT_NETRC_CONTENT: ${{ inputs.netrc-content }}
         INPUT_MAVEN_SETTINGS_XML: ${{ inputs.maven-settings-xml }}
         INPUT_GRADLE_INIT_SCRIPT: ${{ inputs.gradle-init-script }}
         ANTHROPIC_BASE_URL: ${{ env.ANTHROPIC_BASE_URL }}
@@ -352,6 +357,22 @@ runs:
           echo "📦 npmrc mounted for private registry authentication"
         fi
 
+        # Mount .netrc as file if content provided. uv and pip read ~/.netrc for private index
+        # credentials. It is mounted as a file (never forwarded as an -e variable) so the agent's
+        # env sanitizer cannot strip it.
+        NETRC_MOUNT=""
+        if [ -n "$INPUT_NETRC_CONTENT" ]; then
+          NETRC_PATH="${RUNNER_TEMP}/netrc"
+          printf '%s\n' "$INPUT_NETRC_CONTENT" > "$NETRC_PATH"
+          # Remove the rendered credentials when the step ends. This trap replaces the Gradle
+          # one, so it cleans up both files (unset variables expand to an empty path).
+          trap 'rm -f "$NETRC_PATH" "$GRADLE_INIT_PATH"' EXIT
+          # Use 644 instead of 600 so the agp user (uid 10000) inside Docker can read it
+          chmod 644 "$NETRC_PATH"
+          NETRC_MOUNT="-v ${NETRC_PATH}:/home/agp/.netrc:ro"
+          echo "📦 netrc mounted for private pip/uv index authentication"
+        fi
+
         # Run AGP container (gh CLI included in image)
         # Note: We add git safe.directory config to handle GitHub Actions checkout
         # shellcheck disable=SC2086
@@ -361,6 +382,7 @@ runs:
           ${GRADLE_INIT_MOUNT} \
           ${DOCKER_SOCKET_OPTS} \
           ${NPMRC_MOUNT} \
+          ${NETRC_MOUNT} \
           -w /github/workspace \
           -e GIT_CONFIG_COUNT=1 \
           -e GIT_CONFIG_KEY_0=safe.directory \
