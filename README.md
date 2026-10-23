@@ -501,8 +501,13 @@ The `machine` value must be the bare hostname of the index URL in `pyproject.tom
 
 If a password contains whitespace, wrap it in double quotes. Write a literal backslash as `\\`. Unquoted whitespace or a single backslash sends no credentials or the wrong ones, and you get the same 401.
 
-The content is written to a file on the runner and removed when the step ends. It is not passed
-to the container as an environment variable.
+The content is written to a file on the runner and removed when the step ends. It is mounted as a
+file (mode 644, readable by the container's `agp` user) instead of an environment variable, so the
+agent's environment sanitizer cannot strip it. That also means anything running as `agp` in the
+container can read it: the agent's shell tools, validation commands and any build backend that
+`uv lock` or pip runs. Use a read-only service account scoped to the index, not a personal or
+write-capable credential. The `npmrc-content`, `maven-settings-xml` and `gradle-init-script` files
+have the same exposure.
 
 ### Private Gradle Repositories
 
