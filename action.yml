@@ -291,6 +291,11 @@ runs:
           echo "DEBUG: INPUT_VULNERABILITIES first 200 chars: ${INPUT_VULNERABILITIES:0:200}"
         fi
 
+        # Credential files rendered below live in RUNNER_TEMP. Register one cleanup trap before the
+        # first file is written (a bash EXIT trap is single-valued, so per-block traps override each
+        # other). Variables expand when the trap fires, and unset ones expand to nothing.
+        trap 'rm -f "${MAVEN_SETTINGS_PATH:-}" "${GRADLE_INIT_PATH:-}" "${NPMRC_PATH:-}" "${NETRC_PATH:-}"' EXIT
+
         # Create Maven settings.xml if provided
         MVN_SETTINGS_MOUNT=""
         MVN_SETTINGS_ENV=""
@@ -316,9 +321,6 @@ runs:
         if [ -n "$INPUT_GRADLE_INIT_SCRIPT" ]; then
           GRADLE_INIT_PATH="${RUNNER_TEMP}/init.gradle"
           printf '%s\n' "$INPUT_GRADLE_INIT_SCRIPT" > "$GRADLE_INIT_PATH"
-          # Remove the rendered credentials from the runner when the step ends, so they do not
-          # outlive the job on a self-hosted runner
-          trap 'rm -f "$GRADLE_INIT_PATH"' EXIT
           # Use 644 instead of 600 so the agp user (uid 10000) inside Docker can read it
           chmod 644 "$GRADLE_INIT_PATH"
           echo "📦 Created Gradle init script for private repository authentication"
@@ -364,9 +366,6 @@ runs:
         if [ -n "$INPUT_NETRC_CONTENT" ]; then
           NETRC_PATH="${RUNNER_TEMP}/netrc"
           printf '%s\n' "$INPUT_NETRC_CONTENT" > "$NETRC_PATH"
-          # Remove the rendered credentials when the step ends. This trap replaces the Gradle
-          # one, so it cleans up both files (unset variables expand to an empty path).
-          trap 'rm -f "$NETRC_PATH" "$GRADLE_INIT_PATH"' EXIT
           # Use 644 instead of 600 so the agp user (uid 10000) inside Docker can read it
           chmod 644 "$NETRC_PATH"
           NETRC_MOUNT="-v ${NETRC_PATH}:/home/agp/.netrc:ro"
