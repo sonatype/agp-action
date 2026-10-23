@@ -363,7 +363,11 @@ runs:
         # credentials. It is mounted as a file (never forwarded as an -e variable) so the agent's
         # env sanitizer cannot strip it.
         NETRC_MOUNT=""
-        if [ -n "$INPUT_NETRC_CONTENT" ]; then
+        if [ -n "${INPUT_NETRC_CONTENT//[[:space:]]/}" ]; then
+          # An unset secret (fork PRs and Dependabot runs) renders as a blank login or password
+          if printf '%s\n' "$INPUT_NETRC_CONTENT" | grep -Eq '^[[:space:]]*(login|password)[[:space:]]*$'; then
+            echo "::warning::netrc-content has an empty login or password; check that the referenced secrets are set"
+          fi
           NETRC_PATH="${RUNNER_TEMP}/netrc"
           printf '%s\n' "$INPUT_NETRC_CONTENT" > "$NETRC_PATH"
           # Use 644 instead of 600 so the agp user (uid 10000) inside Docker can read it
