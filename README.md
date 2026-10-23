@@ -497,6 +497,10 @@ container, and uv and pip both read that file. Without it, steps such as `uv loc
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+The `machine` value must be the bare hostname of the index URL in `pyproject.toml`: no scheme and no port. For `https://nexus.company.com:8443/repository/pypi/simple` use `machine nexus.company.com`. A scheme or port in `machine` makes uv and pip skip the entry without an error, and you get the same 401. Don't add a `default` entry: it sends the credentials to every host, including PyPI.
+
+If a password contains whitespace, wrap it in double quotes. Write a literal backslash as `\\`. Unquoted whitespace or a single backslash sends no credentials or the wrong ones, and you get the same 401.
+
 The content is written to a file on the runner and removed when the step ends. It is not passed
 to the container as an environment variable.
 
