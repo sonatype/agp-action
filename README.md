@@ -133,6 +133,7 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `group` | No | | Apply only a specific group by ID |
 | `validation-commands` | No | | Commands to validate upgrades (newline-separated) |
 | `npmrc-content` | No | | `.npmrc` file content for private registry authentication |
+| `netrc-content` | No | | `.netrc` file content for private pip/uv index authentication. See [Private pip/uv Index](#private-pipuv-index) |
 | `maven-settings-xml` | No | | Maven `settings.xml` content for private repository authentication (Maven builds only) |
 | `gradle-init-script` | No | | Gradle init script content for private repository authentication (Gradle builds only). See [Private Gradle Repositories](#private-gradle-repositories) |
 | `anthropic-base-url` | No | | Custom Anthropic API endpoint |
@@ -473,6 +474,43 @@ For projects using a private npm registry (like Nexus or Artifactory), provide y
        AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
    ```
+
+### Private pip/uv Index
+
+For Python projects whose pip or uv index requires credentials (for example a `[[tool.uv.index]]`
+entry pointing at Nexus), provide `.netrc` content. It is mounted read-only as `~/.netrc` in the
+container, and uv and pip both read that file. Without it, steps such as `uv lock` fail with
+`401 Unauthorized`.
+
+```yaml
+- name: Run AGP
+  uses: sonatype/agp-action@v1
+  with:
+    create-pr: true
+    netrc-content: |
+      machine sonatype.repo.sonatype.app
+      login ${{ secrets.UV_USER }}
+      password ${{ secrets.UV_PASSWORD }}
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    AGP_API_TOKEN: ${{ secrets.AGP_API_TOKEN }}
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+`UV_USER` and `UV_PASSWORD` are example secret names. Create them (or your own) as repository or
+organization secrets, or pass the values from another source.
+
+The `machine` value must be the bare hostname of the index URL in `pyproject.toml`: no scheme and no port. For `https://nexus.company.com:8443/repository/pypi/simple` use `machine nexus.company.com`. A scheme or port in `machine` makes uv and pip skip the entry without an error, and you get the same 401. Don't add a `default` entry: it sends the credentials to every host, including PyPI.
+
+If a password contains whitespace, wrap it in double quotes. Write a literal backslash as `\\`. Unquoted whitespace or a single backslash sends no credentials or the wrong ones, and you get the same 401.
+
+The content is written to a file on the runner and removed when the step ends. It is mounted as a
+file (mode 644, readable by the container's `agp` user) instead of an environment variable, so the
+agent's environment sanitizer cannot strip it. That also means anything running as `agp` in the
+container can read it: the agent's shell tools, validation commands and any build backend that
+`uv lock` or pip runs. Use a read-only service account scoped to the index, not a personal or
+write-capable credential. The `npmrc-content`, `maven-settings-xml` and `gradle-init-script` files
+have the same exposure.
 
 ### Private Gradle Repositories
 
