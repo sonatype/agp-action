@@ -147,7 +147,7 @@ if [ "$(uname -s)" = "Linux" ] && command -v docker >/dev/null 2>&1 && docker in
   me="$(id -u)"
   # Without this the checks below could pass trivially: they only mean something if the fixture
   # really is owned by the agp uid before the restore runs.
-  check "integration: fixture starts owned by uid 10000" "10000" "$(stat -c '%u' "${WS}/priv/f")"
+  check "integration: fixture starts owned by uid 10000" "10000" "$(stat -c '%u' "${WS}/priv")"
   main "${IMG}" "${WS}" >/dev/null 2>&1 || true
   check "integration: workspace root restored"          "${me}" "$(stat -c '%u' "${WS}/config")"
   check "integration: 0700 directory restored"          "${me}" "$(stat -c '%u' "${WS}/priv")"
