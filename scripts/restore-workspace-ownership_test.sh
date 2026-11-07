@@ -30,7 +30,17 @@ check() {
 }
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "${TMP}"' EXIT
+# The integration test leaves files owned by uid 10000 in a directory under TMP when it fails
+# part-way, which the invoking user cannot delete, so hand them back through a root container first.
+INTEGRATION_IMAGE=""
+cleanup() {
+  if [ -n "${INTEGRATION_IMAGE}" ]; then
+    docker run --rm --user 0:0 --mount "type=bind,source=${TMP},target=/t" \
+      "${INTEGRATION_IMAGE}" chown -hR "$(id -u):$(id -g)" /t >/dev/null 2>&1 || true
+  fi
+  rm -rf "${TMP}"
+}
+trap cleanup EXIT
 mkdir -p "${TMP}/ws" "${TMP}/real"
 ln -s "${TMP}/real" "${TMP}/link"
 
@@ -116,11 +126,16 @@ check "warns on a missing image argument"        "1"  "$(printf '%s' "${out}" | 
 # --- integration: real container, Linux only ---
 if [ "$(uname -s)" = "Linux" ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   IMG="${RESTORE_TEST_IMAGE:-alpine:3.22}"
+  INTEGRATION_IMAGE="${IMG}"
   docker image inspect "${IMG}" >/dev/null 2>&1 || docker pull -q "${IMG}" >/dev/null
   WS="${TMP}/integration"
-  OUTSIDE="${TMP}/outside-target"
-  mkdir -p "${WS}"
+  OUTSIDE="${TMP}/outside/target"
+  mkdir -p "${WS}" "${TMP}/outside"
   echo secret > "${OUTSIDE}"
+  # Owned by a third uid, so a restore that wrongly followed the symlink would visibly change it.
+  docker run --rm --user 0:0 --mount "type=bind,source=${TMP}/outside,target=/o" "${IMG}" \
+    chown -R 12345:12345 /o
+  ln -s "${OUTSIDE}" "${WS}/outside-link"
   # Simulate what the AGP container leaves behind: files owned by uid 10000, a 0700 directory it
   # created, and a symlink pointing outside the workspace.
   docker run --rm --user 0:0 --mount "type=bind,source=${WS},target=/w" "${IMG}" sh -c '
@@ -128,7 +143,6 @@ if [ "$(uname -s)" = "Linux" ] && command -v docker >/dev/null 2>&1 && docker in
     echo c > /w/config
     ln -s /nonexistent /w/dangling
     chown -hR 10000:10000 /w'
-  ln -s "${OUTSIDE}" "${WS}/outside-link"
   before="$(stat -c '%u' "${OUTSIDE}")"
   me="$(id -u)"
   # Without this the checks below could pass trivially: they only mean something if the fixture
@@ -139,7 +153,8 @@ if [ "$(uname -s)" = "Linux" ] && command -v docker >/dev/null 2>&1 && docker in
   check "integration: 0700 directory restored"          "${me}" "$(stat -c '%u' "${WS}/priv")"
   check "integration: file inside 0700 dir restored"    "${me}" "$(stat -c '%u' "${WS}/priv/f")"
   check "integration: dangling symlink restored"        "${me}" "$(stat -c '%u' "${WS}/dangling")"
-  check "integration: symlink target outside untouched" "${before}" "$(stat -c '%u' "${OUTSIDE}")"
+  check "integration: symlink target starts owned by uid 12345" "12345" "${before}"
+  check "integration: symlink target outside untouched" "12345" "$(stat -c '%u' "${OUTSIDE}")"
 else
   echo "skip - integration test (needs Linux and a running docker)"
 fi
