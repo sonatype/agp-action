@@ -435,6 +435,21 @@ runs:
           "${IMAGE}"
 
     # Parse outputs from AGP run (if any)
+    # The AGP container chowns the bind-mounted workspace to its non-root user and exits without
+    # handing it back. Left alone, the runner cannot take the .git/config lock, so actions/checkout
+    # cannot remove its persisted credential header in its post-job cleanup (it warns "Failed to
+    # remove 'http.https://github.com/.extraheader' from the git config"), and later steps in the
+    # job cannot write to the checkout. Runs when the step above ran, whatever its outcome, and on
+    # cancellation. Best effort: it never fails the job.
+    - name: Restore workspace ownership
+      if: ${{ always() && steps.run-agp.conclusion != 'skipped' }}
+      shell: bash
+      env:
+        AGP_IMAGE: ${{ inputs.docker-image }}
+        ACTION_PATH: ${{ github.action_path }}
+        WORKSPACE: ${{ github.workspace }}
+      run: bash "${ACTION_PATH}/scripts/restore-workspace-ownership.sh" "${AGP_IMAGE}" "${WORKSPACE}"
+
     - name: Parse Outputs
       id: parse-outputs
       shell: bash

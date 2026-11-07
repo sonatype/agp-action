@@ -72,3 +72,7 @@ jobs:
       - name: Test governed Bedrock role resolution
         run: |
           bash scripts/resolve-bedrock-role_test.sh
+
+      - name: Test workspace ownership restore
+        run: |
+          bash scripts/restore-workspace-ownership_test.sh
