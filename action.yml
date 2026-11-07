@@ -221,7 +221,7 @@ runs:
 
     - name: Configure AWS credentials for Bedrock (OIDC)
       if: ${{ steps.bedrock-role.outputs.role != '' }}
-      uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      uses: aws-actions/configure-aws-credentials@v6.3.0
       with:
         role-to-assume: ${{ steps.bedrock-role.outputs.role }}
         aws-region: ${{ steps.bedrock-role.outputs.region }}
