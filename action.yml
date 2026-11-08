@@ -434,6 +434,17 @@ runs:
           ${GRADLE_HOME_ENV} \
           "${IMAGE}"
 
+    # The AGP container leaves the workspace owned by its agp user, which breaks checkout's
+    # post-job cleanup. Runs after Run AGP whatever its outcome, and never fails the job.
+    - name: Restore workspace ownership
+      if: ${{ always() && steps.run-agp.conclusion != 'skipped' }}
+      shell: bash
+      env:
+        AGP_IMAGE: ${{ inputs.docker-image }}
+        ACTION_PATH: ${{ github.action_path }}
+        WORKSPACE: ${{ github.workspace }}
+      run: bash "${ACTION_PATH}/scripts/restore-workspace-ownership.sh" "${AGP_IMAGE}" "${WORKSPACE}"
+
     # Parse outputs from AGP run (if any)
     - name: Parse Outputs
       id: parse-outputs
