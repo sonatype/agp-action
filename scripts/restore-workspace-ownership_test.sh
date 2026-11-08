@@ -5,11 +5,8 @@
 # "Sonatype" is a trademark of Sonatype, Inc.
 #
 # restore-workspace-ownership_test.sh — tests for scripts/restore-workspace-ownership.sh.
-#
-# The unit tests need no docker: they check the workspace validation, that the command carries
-# every hardening flag, and the best-effort behaviour against a stub `docker`. The integration
-# test at the end runs a real container and only runs on Linux with docker available, because
-# Docker Desktop's file sharing on macOS does not apply chown to the host faithfully.
+# Unit tests use a stub docker. The integration test needs Linux and docker (Docker Desktop on
+# macOS does not apply chown to host files faithfully).
 
 set -euo pipefail
 
@@ -30,8 +27,7 @@ check() {
 }
 
 TMP="$(mktemp -d)"
-# The integration test leaves files owned by uid 10000 in a directory under TMP when it fails
-# part-way, which the invoking user cannot delete, so hand them back through a root container first.
+# Files left owned by other uids cannot be deleted by the invoking user; hand them back first.
 INTEGRATION_IMAGE=""
 cleanup() {
   if [ -n "${INTEGRATION_IMAGE}" ]; then
@@ -132,12 +128,11 @@ if [ "$(uname -s)" = "Linux" ] && command -v docker >/dev/null 2>&1 && docker in
   OUTSIDE="${TMP}/outside/target"
   mkdir -p "${WS}" "${TMP}/outside"
   echo secret > "${OUTSIDE}"
-  # Owned by a third uid, so a restore that wrongly followed the symlink would visibly change it.
+  # Owned by a third uid so following the symlink would visibly change it.
   docker run --rm --user 0:0 --mount "type=bind,source=${TMP}/outside,target=/o" "${IMG}" \
     chown -R 12345:12345 /o
   ln -s "${OUTSIDE}" "${WS}/outside-link"
-  # Simulate what the AGP container leaves behind: files owned by uid 10000, a 0700 directory it
-  # created, and a symlink pointing outside the workspace.
+  # What the AGP container leaves behind: uid 10000 files, a 0700 directory, a dangling symlink.
   docker run --rm --user 0:0 --mount "type=bind,source=${WS},target=/w" "${IMG}" sh -c '
     mkdir -m 700 /w/priv && echo x > /w/priv/f && chmod 600 /w/priv/f
     echo c > /w/config
@@ -145,8 +140,6 @@ if [ "$(uname -s)" = "Linux" ] && command -v docker >/dev/null 2>&1 && docker in
     chown -hR 10000:10000 /w'
   before="$(stat -c '%u' "${OUTSIDE}")"
   me="$(id -u)"
-  # Without this the checks below could pass trivially: they only mean something if the fixture
-  # really is owned by the agp uid before the restore runs.
   check "integration: fixture starts owned by uid 10000" "10000" "$(stat -c '%u' "${WS}/priv")"
   main "${IMG}" "${WS}" >/dev/null 2>&1 || true
   check "integration: workspace root restored"          "${me}" "$(stat -c '%u' "${WS}/config")"

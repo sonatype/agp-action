@@ -434,13 +434,8 @@ runs:
           ${GRADLE_HOME_ENV} \
           "${IMAGE}"
 
-    # Parse outputs from AGP run (if any)
-    # The AGP container chowns the bind-mounted workspace to its non-root user and exits without
-    # handing it back. Left alone, the runner cannot take the .git/config lock, so actions/checkout
-    # cannot remove its persisted credential header in its post-job cleanup (it warns "Failed to
-    # remove 'http.https://github.com/.extraheader' from the git config"), and later steps in the
-    # job cannot write to the checkout. Runs when the step above ran, whatever its outcome, and on
-    # cancellation. Best effort: it never fails the job.
+    # The AGP container leaves the workspace owned by its agp user, which breaks checkout's
+    # post-job cleanup. Runs after Run AGP whatever its outcome, and never fails the job.
     - name: Restore workspace ownership
       if: ${{ always() && steps.run-agp.conclusion != 'skipped' }}
       shell: bash
@@ -450,6 +445,7 @@ runs:
         WORKSPACE: ${{ github.workspace }}
       run: bash "${ACTION_PATH}/scripts/restore-workspace-ownership.sh" "${AGP_IMAGE}" "${WORKSPACE}"
 
+    # Parse outputs from AGP run (if any)
     - name: Parse Outputs
       id: parse-outputs
       shell: bash
