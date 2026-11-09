@@ -395,6 +395,7 @@ runs:
           -e AGP_API_TOKEN \
           -e AGP_API_URL \
           -e GITHUB_TOKEN \
+          -e GITHUB_SERVER_URL \
           -e GH_TOKEN="${{ env.GITHUB_TOKEN }}" \
           -e GITHUB_REPOSITORY="${{ github.repository }}" \
           -e GITHUB_RUN_ID="${{ github.run_id }}" \

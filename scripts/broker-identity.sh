@@ -11,6 +11,18 @@ SONATYPE_GUIDE_BOT_LOGIN="sonatype-guide[bot]"
 # GET https://api.github.com/users/sonatype-guide[bot] -> .id
 SONATYPE_GUIDE_BOT_ID="262430933"
 
+noreply_domain() {
+  local host="${GITHUB_SERVER_URL:-https://github.com}"
+  host="${host#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  if [ -z "$host" ] || [ "$host" = "github.com" ]; then
+    echo "users.noreply.github.com"
+  else
+    echo "users.noreply.${host}"
+  fi
+}
+
 # Sets ACTOR_LOGIN, ACTOR_ID and AUTH_SOURCE, and fills GIT_NAME / GIT_EMAIL only where they are empty, from the
 # minting App's bot that the broker names in `actor`. The broker is the only authority for it: it is already trusted
 # with the token, so a wrong actor misattributes commits but grants nothing.
@@ -50,7 +62,7 @@ resolve_broker_identity() {
     GIT_NAME="$ACTOR_LOGIN"
   fi
   if [ -z "$GIT_EMAIL" ]; then
-    GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@users.noreply.github.com"
+    GIT_EMAIL="${ACTOR_ID}+${ACTOR_LOGIN}@$(noreply_domain)"
   fi
 }
 

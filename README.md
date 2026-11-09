@@ -147,7 +147,7 @@ To pull from a private registry, override `docker-image` and supply credentials.
 | `verbose` | No | `false` | Enable verbose output (may expose sensitive data in logs) |
 | `github-token` | No | _(minted via OIDC)_ | Override for the token used to push commits and open PRs. When unset, the action mints a scoped token from Sonatype Guide's broker so PRs open as the minting App's bot (`sonatype-guide[bot]` for Sonatype's). |
 | `git-user-name` | No | The minting App's bot (`sonatype-guide[bot]` for Sonatype's) when broker is used, otherwise `AGP Bot` | Git user name for commits. |
-| `git-user-email` | No | `<user-id>+<bot-login>@users.noreply.github.com` when broker is used, otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
+| `git-user-email` | No | `<user-id>+<bot-login>@users.noreply.<server-host>` when broker is used (`github.com` unless the job runs on GHES), otherwise `agp-bot@sonatype.com` | Git user email for commits. The broker-derived default is required for GitHub to show the Verified bot badge. |
 
 ### Self-hosted Nexus IQ Server
 
@@ -181,6 +181,14 @@ jobs:
         with:
           audience: https://iq.example.com
 ```
+
+### GitHub Enterprise Server
+
+The action forwards the job's `GITHUB_SERVER_URL` into the Agent P container, so the CLI pushes and opens pull requests on your GHES host instead of github.com. On GHES the default commit e-mail uses `users.noreply.<ghes-host>`, for example `7+acme-iq[bot]@users.noreply.ghes.example.com`. A `git-user-email` you set is kept as given. The container needs a version of the `sonatype/agp` image that reads `GITHUB_SERVER_URL`; with an older image the variable is ignored and behaviour is unchanged.
+
+- **Mirrors.** Without GitHub Connect, mirror these repositories onto GHES with their tags and reference the mirrors in your workflows: `sonatype/agp-action`, `docker/login-action` and `aws-actions/configure-aws-credentials`. Re-run the mirror when you upgrade the action. `actions/checkout` must be a tag your GHES bundles.
+- **Image access.** The runner needs Docker and access to `sonatype/agp` on Docker Hub. If it cannot reach Docker Hub, point the Docker daemon's `registry-mirrors` at an internal registry that holds the image, or set `docker-image` to a path in your own registry together with `docker-username` and `docker-password`. A custom registry is not officially supported (see [Docker Image Registry](#docker-image-registry)).
+- **Private CA.** The container has its own trust stores, separate from the runner's. If GHES or Nexus IQ Server uses a certificate from a private CA, build a derived `sonatype/agp` image that adds your CA to the container's trust stores, and set `NODE_EXTRA_CA_CERTS` to the CA file. Point `docker-image` at that image. The action has no CA input.
 
 ## Security
 

@@ -105,6 +105,7 @@ source "${SCRIPT_DIR}/broker-identity.sh"
 # Runs the real identity resolution. Prints name|email|auth-source, then any annotations it printed.
 identity_fixture() {
   local body="$1" GIT_NAME="${2:-}" GIT_EMAIL="${3:-}" api_url="${4:-${DEFAULT_BROKER_URL}}"
+  local GITHUB_SERVER_URL="${5:-https://github.com}"
   local tmp annotations ACTOR_LOGIN ACTOR_ID AUTH_SOURCE
   tmp=$(mktemp)
   annotations=$(mktemp)
@@ -208,6 +209,28 @@ check "a self-hosted broker with a valid actor gets no notice" \
   "${ACME_IDENTITY}" \
   "$(identity_fixture "${ACME}" '' '' 'https://agp.example.com')"
 
+GHES_URL='https://ghes.example.test'
+
+check "Bot commit email uses the GHES noreply domain" \
+  'acme-iq[bot]|7+acme-iq[bot]@users.noreply.ghes.example.test|acme-iq[bot] via OIDC broker' \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-iq[bot]","id":7}}' '' '' "${DEFAULT_BROKER_URL}" "${GHES_URL}")"
+
+check "Bot commit email on github.com is unchanged" \
+  "${GUIDE_IDENTITY}" \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"sonatype-guide[bot]","id":262430933}}' '' '' "${DEFAULT_BROKER_URL}" 'https://github.com')"
+
+check "A given commit email is kept" \
+  'acme-agentp[bot]|bot@mycompany.com|acme-agentp[bot] via OIDC broker' \
+  "$(identity_fixture "${ACME}" '' 'bot@mycompany.com' "${DEFAULT_BROKER_URL}" "${GHES_URL}")"
+
+check "A GHES server URL with a port and a path uses the bare host" \
+  'acme-iq[bot]|7+acme-iq[bot]@users.noreply.ghes.example.test|acme-iq[bot] via OIDC broker' \
+  "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-iq[bot]","id":7}}' '' '' "${DEFAULT_BROKER_URL}" 'https://ghes.example.test:8443/')"
+
+check "An unset server URL keeps the github.com noreply domain" \
+  "${ACME_IDENTITY}" \
+  "$(identity_fixture "${ACME}" '' '' "${DEFAULT_BROKER_URL}" '')"
+
 # Line number of the first line of prepare-auth.sh that contains the given text, or 0.
 line_of() {
   grep -nF -- "$1" "${SCRIPT_DIR}/prepare-auth.sh" | head -1 | cut -d: -f1 || true
@@ -304,6 +327,15 @@ check "action.yml forwards the audience input into the container" \
 check "the Run AGP step env does not assign AGP_OIDC_AUDIENCE directly" \
   "none" \
   "$(if run_agp_block | grep -Eq '^ +AGP_OIDC_AUDIENCE:'; then echo assigned; else echo none; fi)"
+
+action_forwards_server_url_to_container() {
+  local block
+  block=$(run_agp_block)
+  [ -n "${block}" ] && grep -Eq -- '-e GITHUB_SERVER_URL( |\\|$)' <<<"${block}"
+}
+check "The container receives the server URL" \
+  "match" \
+  "$(if action_forwards_server_url_to_container; then echo match; else echo drift; fi)"
 
 # Audience / broker consistency annotations.
 audience_fixture() {
