@@ -430,7 +430,7 @@ exclude_config_from_git() {
 
 main() {
   local script_dir base_url oidc_token http_code body_snippet raw_len directive
-  local workspace_root config_resolved config_dir config_dir_real audience_log
+  local workspace_root config_resolved config_dir config_dir_real
 
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -497,11 +497,7 @@ main() {
     if [ "${raw_len:-0}" -gt 500 ]; then
       body_snippet="${body_snippet} [truncated]"
     fi
-    audience_log="$(printf '%s' "${OIDC_AUDIENCE}" | LC_ALL=C tr -d '[:cntrl:]')"
-    echo "::error::agp-gate: Guide returned HTTP ${http_code} from ${base_url}/agp/effective-config for a token minted with audience '${audience_log}'; skipping run (fail-closed)."
-    if [ "${http_code}" = "401" ]; then
-      echo "The audience must equal the one the server expects: the IQ base URL for IQ Server, https://guide.sonatype.com for Guide."
-    fi
+    echo "::error::agp-gate: Guide returned HTTP ${http_code} from ${base_url}/agp/effective-config; skipping run (fail-closed)."
     if [ -n "${body_snippet}" ]; then
       echo "Response body (truncated): ${body_snippet}"
     fi
