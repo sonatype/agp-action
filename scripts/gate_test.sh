@@ -411,6 +411,47 @@ audience_in_sync() {
 }
 check "audience default in sync"              "insync" "$(if audience_in_sync; then echo insync; else echo drift; fi)"
 
+mkdir -p "${tmp}/stubbin" "${tmp}/gatews"
+cat > "${tmp}/stubbin/curl" <<'STUB'
+#!/usr/bin/env bash
+out=""
+prev=""
+for a in "$@"; do
+  if [ "${prev}" = "-o" ]; then out="${a}"; fi
+  prev="${a}"
+  url="${a}"
+done
+case "${url}" in
+  *effective-config*) printf '%s' '{"error":"invalid audience"}' > "${out}"; printf '401' ;;
+  *) printf '%s' '{"value":"stub-token"}' > "${out}"; printf '200' ;;
+esac
+STUB
+chmod +x "${tmp}/stubbin/curl"
+
+run_gate_with_effective_config_401() {
+  local audience="$1"
+  : > "${tmp}/gate-output"
+  (
+    export PATH="${tmp}/stubbin:${PATH}"
+    export GUIDE_URL_INPUT="https://iq.example.test:8443/api/agp" CONFIG_PATH="agp.yml"
+    export OIDC_AUDIENCE="${audience}" GITHUB_WORKSPACE="${tmp}/gatews" GITHUB_OUTPUT="${tmp}/gate-output"
+    export RUNNER_TEMP="${tmp}" ACTIONS_ID_TOKEN_REQUEST_URL="https://token.example.test/mint" ACTIONS_ID_TOKEN_REQUEST_TOKEN="req-token"
+    bash "${SCRIPT_DIR}/gate.sh" > "${tmp}/gate-stdout" 2> "${tmp}/gate-stderr"
+  ) && gate_status=0 || gate_status=$?
+}
+
+run_gate_with_effective_config_401 "https://wrong.example.test"
+check "The gate's 401 error line names the audience it requested" "accept" \
+  "$(grep_line "${tmp}/gate-stdout" "::error::agp-gate: Guide returned HTTP 401 from https://iq.example.test:8443/api/agp/agp/effective-config for a token minted with audience 'https://wrong.example.test'; skipping run (fail-closed).")"
+check "401 line says the audience must equal the server's" "1" \
+  "$(grep -Fc 'The audience must equal the one the server expects: the IQ base URL for IQ Server, https://guide.sonatype.com for Guide.' "${tmp}/gate-stdout" || true)"
+check "gate exits non-zero on 401"             "1"        "${gate_status}"
+check "gate writes no directive on 401"        "0"        "$(grep -c '^directive=' "${tmp}/gate-output" || true)"
+
+run_gate_with_effective_config_401 $'https://x.example.test\n::error::injected'
+check "newline in audience cannot start a workflow command" "0" \
+  "$(grep -c '^::error::injected' "${tmp}/gate-stdout" || true)"
+
 # NOTE: the fail-closed http_code != 200 branch, the curl 000 fallback, the realpath
 # resolution, and the atomic stage->move in main() depend on a real (or mocked) HTTP
 # round-trip / filesystem and are exercised end-to-end when the action runs, not here.
