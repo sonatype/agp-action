@@ -105,7 +105,7 @@ source "${SCRIPT_DIR}/broker-identity.sh"
 # Runs the real identity resolution. Prints name|email|auth-source, then any annotations it printed.
 identity_fixture() {
   local body="$1" GIT_NAME="${2:-}" GIT_EMAIL="${3:-}" api_url="${4:-${DEFAULT_BROKER_URL}}"
-  local GITHUB_SERVER_URL="${5:-https://github.com}"
+  local GITHUB_SERVER_URL="${5-https://github.com}"
   local tmp annotations ACTOR_LOGIN ACTOR_ID AUTH_SOURCE
   tmp=$(mktemp)
   annotations=$(mktemp)
@@ -227,9 +227,13 @@ check "A GHES server URL with a port and a path uses the bare host" \
   'acme-iq[bot]|7+acme-iq[bot]@users.noreply.ghes.example.test|acme-iq[bot] via OIDC broker' \
   "$(identity_fixture '{"token":"ghs_x","actor":{"login":"acme-iq[bot]","id":7}}' '' '' "${DEFAULT_BROKER_URL}" 'https://ghes.example.test:8443/')"
 
-check "An unset server URL keeps the github.com noreply domain" \
+check "An empty server URL keeps the github.com noreply domain" \
   "${ACME_IDENTITY}" \
   "$(identity_fixture "${ACME}" '' '' "${DEFAULT_BROKER_URL}" '')"
+
+check "noreply_domain with GITHUB_SERVER_URL unset falls back to github.com" \
+  "users.noreply.github.com" \
+  "$(unset GITHUB_SERVER_URL; noreply_domain)"
 
 # Line number of the first line of prepare-auth.sh that contains the given text, or 0.
 line_of() {
